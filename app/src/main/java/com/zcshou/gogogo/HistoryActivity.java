@@ -42,6 +42,7 @@ public class HistoryActivity extends BaseActivity {
     public static final String KEY_TIME = "KEY_TIME";
     public static final String KEY_LNG_LAT_WGS = "KEY_LNG_LAT_WGS";
     public static final String KEY_LNG_LAT_CUSTOM = "KEY_LNG_LAT_CUSTOM";
+    public static final String KEY_FAVORITE = "KEY_FAVORITE";
 
     private ListView mRecordListView;
     private TextView noRecordText;
@@ -136,7 +137,10 @@ public class HistoryActivity extends BaseActivity {
         try {
             Cursor cursor = mHistoryLocationDB.query(DataBaseHistoryLocation.TABLE_NAME, null,
                     DataBaseHistoryLocation.DB_COLUMN_ID + " > ?", new String[] {"0"},
-                    null, null, DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP + " DESC", null);
+                    null, null,
+                    DataBaseHistoryLocation.DB_COLUMN_FAVORITE + " DESC, "
+                            + DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP + " DESC",
+                    null);
 
             while (cursor.moveToNext()) {
                 Map<String, Object> item = new HashMap<>();
@@ -147,6 +151,7 @@ public class HistoryActivity extends BaseActivity {
                 long TimeStamp = cursor.getInt(4);
                 String BD09Longitude = cursor.getString(5);
                 String BD09Latitude = cursor.getString(6);
+                boolean favorite = cursor.getInt(7) == 1;
                 Log.d("TB", ID + "\t" + Location + "\t" + Longitude + "\t" + Latitude + "\t" + TimeStamp + "\t" + BD09Longitude + "\t" + BD09Latitude);
                 BigDecimal bigDecimalLongitude = BigDecimal.valueOf(Double.parseDouble(Longitude));
                 BigDecimal bigDecimalLatitude = BigDecimal.valueOf(Double.parseDouble(Latitude));
@@ -161,6 +166,7 @@ public class HistoryActivity extends BaseActivity {
                 item.put(KEY_TIME, GoUtils.timeStamp2Date(Long.toString(TimeStamp)));
                 item.put(KEY_LNG_LAT_WGS, "[经度:" + doubleLongitude + " 纬度:" + doubleLatitude + "]");
                 item.put(KEY_LNG_LAT_CUSTOM, "[经度:" + doubleBDLongitude + " 纬度:" + doubleBDLatitude + "]");
+                item.put(KEY_FAVORITE, favorite ? "★" : "");
                 data.add(item);
             }
             cursor.close();
@@ -183,7 +189,9 @@ public class HistoryActivity extends BaseActivity {
 
         try {
             mHistoryLocationDB.delete(DataBaseHistoryLocation.TABLE_NAME,
-                    DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP + " < ?", new String[] {Long.toString(System.currentTimeMillis() / 1000 - weekSecond)});
+                    DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP + " < ? AND "
+                            + DataBaseHistoryLocation.DB_COLUMN_FAVORITE + " = 0",
+                    new String[] {Long.toString(System.currentTimeMillis() / 1000 - weekSecond)});
         } catch (Exception e) {
             Log.e("HistoryActivity", "ERROR - recordArchive");
         }
@@ -226,8 +234,8 @@ public class HistoryActivity extends BaseActivity {
                             HistoryActivity.this.getBaseContext(),
                             mAllRecord,
                             R.layout.history_item,
-                            new String[]{KEY_ID, KEY_LOCATION, KEY_TIME, KEY_LNG_LAT_WGS, KEY_LNG_LAT_CUSTOM}, // 与下面数组元素要一一对应
-                            new int[]{R.id.LocationID, R.id.LocationText, R.id.TimeText, R.id.WGSLatLngText, R.id.BDLatLngText});
+                            new String[]{KEY_ID, KEY_LOCATION, KEY_TIME, KEY_LNG_LAT_WGS, KEY_LNG_LAT_CUSTOM, KEY_FAVORITE}, // 与下面数组元素要一一对应
+                            new int[]{R.id.LocationID, R.id.LocationText, R.id.TimeText, R.id.WGSLatLngText, R.id.BDLatLngText, R.id.FavoriteText});
                     mRecordListView.setAdapter(simAdapt);
                 } else {
                     List<Map<String, Object>> searchRet = new ArrayList<>();
@@ -241,8 +249,8 @@ public class HistoryActivity extends BaseActivity {
                                 HistoryActivity.this.getBaseContext(),
                                 searchRet,
                                 R.layout.history_item,
-                                new String[]{KEY_ID, KEY_LOCATION, KEY_TIME, KEY_LNG_LAT_WGS, KEY_LNG_LAT_CUSTOM}, // 与下面数组元素要一一对应
-                                new int[]{R.id.LocationID, R.id.LocationText, R.id.TimeText, R.id.WGSLatLngText, R.id.BDLatLngText});
+                                new String[]{KEY_ID, KEY_LOCATION, KEY_TIME, KEY_LNG_LAT_WGS, KEY_LNG_LAT_CUSTOM, KEY_FAVORITE}, // 与下面数组元素要一一对应
+                                new int[]{R.id.LocationID, R.id.LocationText, R.id.TimeText, R.id.WGSLatLngText, R.id.BDLatLngText, R.id.FavoriteText});
                         mRecordListView.setAdapter(simAdapt);
                     } else {
                         GoUtils.DisplayToast(HistoryActivity.this, getResources().getString(R.string.history_error_search));
@@ -250,8 +258,8 @@ public class HistoryActivity extends BaseActivity {
                                 HistoryActivity.this.getBaseContext(),
                                 mAllRecord,
                                 R.layout.history_item,
-                                new String[]{KEY_ID, KEY_LOCATION, KEY_TIME, KEY_LNG_LAT_WGS, KEY_LNG_LAT_CUSTOM}, // 与下面数组元素要一一对应
-                                new int[]{R.id.LocationID, R.id.LocationText, R.id.TimeText, R.id.WGSLatLngText, R.id.BDLatLngText});
+                                new String[]{KEY_ID, KEY_LOCATION, KEY_TIME, KEY_LNG_LAT_WGS, KEY_LNG_LAT_CUSTOM, KEY_FAVORITE}, // 与下面数组元素要一一对应
+                                new int[]{R.id.LocationID, R.id.LocationText, R.id.TimeText, R.id.WGSLatLngText, R.id.BDLatLngText, R.id.FavoriteText});
                         mRecordListView.setAdapter(simAdapt);
                     }
                 }
@@ -387,8 +395,8 @@ public class HistoryActivity extends BaseActivity {
                         this,
                         mAllRecord,
                         R.layout.history_item,
-                        new String[]{KEY_ID, KEY_LOCATION, KEY_TIME, KEY_LNG_LAT_WGS, KEY_LNG_LAT_CUSTOM},
-                        new int[]{R.id.LocationID, R.id.LocationText, R.id.TimeText, R.id.WGSLatLngText, R.id.BDLatLngText});
+                        new String[]{KEY_ID, KEY_LOCATION, KEY_TIME, KEY_LNG_LAT_WGS, KEY_LNG_LAT_CUSTOM, KEY_FAVORITE},
+                        new int[]{R.id.LocationID, R.id.LocationText, R.id.TimeText, R.id.WGSLatLngText, R.id.BDLatLngText, R.id.FavoriteText});
                 mRecordListView.setAdapter(simAdapt);
             } catch (Exception e) {
                 Log.e("HistoryActivity", "ERROR - updateRecordList");

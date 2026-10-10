@@ -1,8 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="colorPrimary">#ff008577</color>
-    <color name="colorPrimaryDark">#ff008577</color>
-    <color name="colorAccent">#ff00897B</color>
+    <color name="colorPrimary">#006B5A</color>
+    <color name="colorPrimaryDark">#004D40</color>
+    <color name="colorAccent">#008F75</color>
+    <color name="surface">#F4F7F6</color>
+    <color name="surface_card">#FFFFFFFF</color>
+    <color name="surface_overlay">#F2FFFFFF</color>
+    <color name="primary_container">#D9F3EA</color>
+    <color name="on_surface">#17211E</color>
+    <color name="on_surface_variant">#5C6B66</color>
+    <color name="outline_soft">#D7E2DE</color>
+    <color name="favorite">#E69200</color>
+    <color name="control_pressed">#C9ECE0</color>
 
     <color name="white">#ffffff</color> <!-- 白色 -->
     <color name="ivory">#fffff0</color> <!-- 象牙色 -->

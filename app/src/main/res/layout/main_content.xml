@@ -4,6 +4,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/surface"
     tools:context=".MainActivity">
 
     <FrameLayout
@@ -13,6 +14,7 @@
         <com.google.android.material.appbar.AppBarLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:elevation="4dp"
             android:theme="@style/AppTheme.AppBarOverlay">
 
             <androidx.appcompat.widget.Toolbar
@@ -20,6 +22,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="?attr/actionBarSize"
                 android:background="@color/colorPrimary"
+                app:titleTextColor="@color/white"
                 app:popupTheme="@style/AppTheme.PopupOverlay" />
 
         </com.google.android.material.appbar.AppBarLayout>
@@ -27,7 +30,7 @@
         <include
             layout="@layout/main_map"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
+            android:layout_height="match_parent"
             android:layout_marginTop="?attr/actionBarSize" />
 
         <com.google.android.material.floatingactionbutton.FloatingActionButton
@@ -35,41 +38,59 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="bottom|start"
-            android:layout_marginStart="30dp"
-            android:layout_marginBottom="80dp"
-            android:contentDescription="@null"
-            app:elevation="6dp"
+            android:layout_marginStart="@dimen/space_lg"
+            android:layout_marginBottom="64dp"
+            android:contentDescription="@string/main_action_position"
+            app:backgroundTint="@color/colorPrimary"
+            app:elevation="8dp"
             app:pressedTranslationZ="12dp"
-            app:srcCompat="@drawable/ic_position" />
+            app:srcCompat="@drawable/ic_position"
+            app:tint="@color/white" />
 
         <LinearLayout
             android:id="@+id/search_linear"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#ddffffff"
-            android:visibility="gone"
-            android:layout_marginTop="?attr/actionBarSize">
+            android:layout_marginStart="@dimen/space_md"
+            android:layout_marginTop="?attr/actionBarSize"
+            android:layout_marginEnd="@dimen/space_md"
+            android:background="@drawable/bg_surface_panel"
+            android:elevation="10dp"
+            android:padding="@dimen/space_xs"
+            android:visibility="gone">
+
             <ListView
                 android:id="@+id/search_list_view"
                 android:layout_width="match_parent"
-                android:layout_margin="10dp"
-                android:layout_height="wrap_content">
-            </ListView>
+                android:layout_height="wrap_content"
+                android:divider="@android:color/transparent"
+                android:dividerHeight="6dp"
+                android:listSelector="@android:color/transparent"
+                android:padding="@dimen/space_xs"
+                android:scrollbars="vertical" />
         </LinearLayout>
 
         <LinearLayout
             android:id="@+id/search_history_linear"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#ddffffff"
-            android:visibility="gone"
-            android:layout_marginTop="?attr/actionBarSize">
+            android:layout_marginStart="@dimen/space_md"
+            android:layout_marginTop="?attr/actionBarSize"
+            android:layout_marginEnd="@dimen/space_md"
+            android:background="@drawable/bg_surface_panel"
+            android:elevation="10dp"
+            android:padding="@dimen/space_xs"
+            android:visibility="gone">
+
             <ListView
                 android:id="@+id/search_history_list_view"
                 android:layout_width="match_parent"
-                android:layout_margin="10dp"
-                android:layout_height="wrap_content">
-            </ListView>
+                android:layout_height="wrap_content"
+                android:divider="@android:color/transparent"
+                android:dividerHeight="6dp"
+                android:listSelector="@android:color/transparent"
+                android:padding="@dimen/space_xs"
+                android:scrollbars="vertical" />
         </LinearLayout>
 
     </FrameLayout>

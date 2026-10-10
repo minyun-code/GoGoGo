@@ -32,14 +32,16 @@ import com.baidu.mapapi.map.MapView;
 import com.baidu.mapapi.map.MarkerOptions;
 import com.baidu.mapapi.map.MyLocationData;
 import com.baidu.mapapi.model.LatLng;
+import com.baidu.mapapi.search.core.SearchResult;
 import com.baidu.mapapi.search.sug.SuggestionSearch;
-import com.baidu.mapapi.search.sug.SuggestionSearchOption;
 import com.zcshou.database.DataBaseHistoryLocation;
 import com.zcshou.gogogo.HistoryActivity;
 import com.zcshou.gogogo.MainActivity;
 import com.zcshou.gogogo.R;
+import com.zcshou.gogogo.SearchResultAdapter;
 import com.zcshou.utils.GoUtils;
 import com.zcshou.utils.MapUtils;
+import com.zcshou.utils.MapSearchUtils;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -89,6 +91,7 @@ public class JoyStick extends View {
     private BaiduMap mBaiduMap;
     private LatLng mCurMapLngLat;
     private LatLng mMarkMapLngLat;
+    private String mMarkMapName;
     private SuggestionSearch mSuggestionSearch;
     private ListView mSearchList;
     private LinearLayout mSearchLayout;
@@ -226,6 +229,9 @@ public class JoyStick extends View {
 
         mBaiduMap.setMyLocationEnabled(false);
         mMapView.onDestroy();
+        if (mSuggestionSearch != null) {
+            mSuggestionSearch.destroy();
+        }
     }
 
     public void setListener(JoyStickClickListener mListener) {
@@ -440,7 +446,10 @@ public class JoyStick extends View {
         mSearchLayout = mMapLayout.findViewById(R.id.map_search_linear);
         mSuggestionSearch = SuggestionSearch.newInstance();
         mSuggestionSearch.setOnGetSuggestionResultListener(suggestionResult -> {
-            if (suggestionResult == null || suggestionResult.getAllSuggestions() == null) {
+            if (suggestionResult == null
+                    || suggestionResult.error != SearchResult.ERRORNO.NO_ERROR
+                    || suggestionResult.getAllSuggestions() == null) {
+                mSearchLayout.setVisibility(View.GONE);
                 GoUtils.DisplayToast(mContext,getResources().getString(R.string.app_search_null));
             } else {
                 List<Map<String, Object>> data = new ArrayList<>();
@@ -459,12 +468,18 @@ public class JoyStick extends View {
                     data.add(poiItem);
                 }
 
-                SimpleAdapter simAdapt = new SimpleAdapter(
+                if (data.isEmpty()) {
+                    mSearchLayout.setVisibility(View.GONE);
+                    GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_search_null));
+                    return;
+                }
+
+                SearchResultAdapter simAdapt = new SearchResultAdapter(
                         mContext,
                         data,
-                        R.layout.search_poi_item,
                         new String[] {MainActivity.POI_NAME, MainActivity.POI_ADDRESS, MainActivity.POI_LONGITUDE, MainActivity.POI_LATITUDE}, // 与下面数组元素要一一对应
-                        new int[] {R.id.poi_name, R.id.poi_address, R.id.poi_longitude, R.id.poi_latitude});
+                        new int[] {R.id.poi_name, R.id.poi_address, R.id.poi_longitude, R.id.poi_latitude},
+                        this::saveSearchResult);
                 mSearchList.setAdapter(simAdapt);
                 mSearchLayout.setVisibility(View.VISIBLE);
             }
@@ -474,7 +489,10 @@ public class JoyStick extends View {
 
             String lng = ((TextView) view.findViewById(R.id.poi_longitude)).getText().toString();
             String lat = ((TextView) view.findViewById(R.id.poi_latitude)).getText().toString();
-            markBaiduMap(new LatLng(Double.parseDouble(lat), Double.parseDouble(lng)));
+            String name = ((TextView) view.findViewById(R.id.poi_name)).getText().toString();
+            String address = ((TextView) view.findViewById(R.id.poi_address)).getText().toString();
+            String location = TextUtils.isEmpty(address) ? name : name + " - " + address;
+            markBaiduMap(new LatLng(Double.parseDouble(lat), Double.parseDouble(lng)), location);
         });
 
         TextView tips = mMapLayout.findViewById(R.id.joystick_map_tips);
@@ -501,20 +519,30 @@ public class JoyStick extends View {
         mSearchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
             @Override
             public boolean onQueryTextSubmit(String query) {
-                return false;
+                if (query == null || query.trim().isEmpty()) {
+                    GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_error_input_null));
+                    return true;
+                }
+
+                try {
+                    mSuggestionSearch.requestSuggestion(
+                            MapSearchUtils.createSuggestionOption(query, MainActivity.mCurrentCity));
+                } catch (Exception e) {
+                    GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_error_search));
+                    Log.e("JoyStick", "Search request failed", e);
+                }
+                return true;
             }
 
             @Override
             public boolean onQueryTextChange(String newText) {
-                if (newText != null && newText.length() > 0) {
+                if (newText != null && !newText.trim().isEmpty()) {
                     try {
-                        mSuggestionSearch.requestSuggestion((new SuggestionSearchOption())
-                                .keyword(newText)
-                                .city(MainActivity.mCurrentCity)
-                        );
+                        mSuggestionSearch.requestSuggestion(
+                                MapSearchUtils.createSuggestionOption(newText, MainActivity.mCurrentCity));
                     } catch (Exception e) {
                         GoUtils.DisplayToast(mContext,getResources().getString(R.string.app_error_search));
-                        e.printStackTrace();
+                        Log.e("JoyStick", "Search request failed", e);
                     }
                 } else {
                     mSearchLayout.setVisibility(GONE);
@@ -553,6 +581,21 @@ public class JoyStick extends View {
             }
         });
         btnGo.setColorFilter(getResources().getColor(R.color.colorAccent, mContext.getTheme()));
+
+        ImageButton btnSaveLocation = mMapLayout.findViewById(R.id.btnSaveLocation);
+        btnSaveLocation.setOnClickListener(v -> {
+            if (mMarkMapLngLat == null) {
+                GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_error_location));
+                return;
+            }
+
+            String location = TextUtils.isEmpty(mMarkMapName)
+                    ? getResources().getString(R.string.history_location_default_name)
+                    : mMarkMapName;
+            saveFavoriteLocation(
+                    location, mMarkMapLngLat.longitude, mMarkMapLngLat.latitude);
+        });
+        btnSaveLocation.setColorFilter(getResources().getColor(R.color.colorAccent, mContext.getTheme()));
 
         ImageButton btnClose = mMapLayout.findViewById(R.id.map_close);
         btnClose.setOnClickListener(v -> {
@@ -629,6 +672,8 @@ public class JoyStick extends View {
 
     private void resetBaiduMap() {
         mBaiduMap.clear();
+        mMarkMapLngLat = null;
+        mMarkMapName = null;
 
         MyLocationData locData = new MyLocationData.Builder()
                 .latitude(mCurMapLngLat.latitude)
@@ -642,7 +687,12 @@ public class JoyStick extends View {
     }
 
     private void markBaiduMap(LatLng latLng) {
+        markBaiduMap(latLng, null);
+    }
+
+    private void markBaiduMap(LatLng latLng, String name) {
         mMarkMapLngLat = latLng;
+        mMarkMapName = name;
 
         MarkerOptions ooA = new MarkerOptions().position(latLng).icon(MainActivity.mMapIndicator);
         mBaiduMap.clear();
@@ -651,6 +701,45 @@ public class JoyStick extends View {
         MapStatus.Builder builder = new MapStatus.Builder();
         builder.target(latLng).zoom(18.0f);
         mBaiduMap.animateMapStatus(MapStatusUpdateFactory.newMapStatus(builder.build()));
+    }
+
+    private void saveSearchResult(String name, String address, String longitude, String latitude) {
+        try {
+            String location = TextUtils.isEmpty(address) ? name : name + " - " + address;
+            saveFavoriteLocation(
+                    location, Double.parseDouble(longitude), Double.parseDouble(latitude));
+        } catch (NumberFormatException e) {
+            GoUtils.DisplayToast(mContext, getResources().getString(R.string.search_favorite_error));
+            Log.e("JoyStick", "Search result has invalid coordinates", e);
+        }
+    }
+
+    private void saveFavoriteLocation(String location, double longitude, double latitude) {
+        SQLiteDatabase historyLocationDB = null;
+        try {
+            DataBaseHistoryLocation dbHelper = new DataBaseHistoryLocation(mContext.getApplicationContext());
+            historyLocationDB = dbHelper.getWritableDatabase();
+            boolean saved = DataBaseHistoryLocation.saveLocation(
+                    historyLocationDB,
+                    location,
+                    longitude,
+                    latitude,
+                    true);
+
+            GoUtils.DisplayToast(mContext, getResources().getString(
+                    saved ? R.string.search_favorite_ok : R.string.search_favorite_error));
+            if (saved) {
+                fetchAllRecord();
+                showHistory(mAllRecord);
+            }
+        } catch (Exception e) {
+            GoUtils.DisplayToast(mContext, getResources().getString(R.string.search_favorite_error));
+            Log.e("JoyStick", "Failed to save favorite location", e);
+        } finally {
+            if (historyLocationDB != null) {
+                historyLocationDB.close();
+            }
+        }
     }
 
 
@@ -765,13 +854,18 @@ public class JoyStick extends View {
     private void fetchAllRecord() {
         SQLiteDatabase mHistoryLocationDB;
 
+        mAllRecord.clear();
+
         try {
             DataBaseHistoryLocation hisLocDBHelper = new DataBaseHistoryLocation(mContext.getApplicationContext());
             mHistoryLocationDB = hisLocDBHelper.getWritableDatabase();
 
             Cursor cursor = mHistoryLocationDB.query(DataBaseHistoryLocation.TABLE_NAME, null,
                     DataBaseHistoryLocation.DB_COLUMN_ID + " > ?", new String[] {"0"},
-                    null, null, DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP + " DESC", null);
+                    null, null,
+                    DataBaseHistoryLocation.DB_COLUMN_FAVORITE + " DESC, "
+                            + DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP + " DESC",
+                    null);
 
             while (cursor.moveToNext()) {
                 Map<String, Object> item = new HashMap<>();
@@ -782,6 +876,7 @@ public class JoyStick extends View {
                 long TimeStamp = cursor.getInt(4);
                 String BD09Longitude = cursor.getString(5);
                 String BD09Latitude = cursor.getString(6);
+                boolean favorite = cursor.getInt(7) == 1;
                 Log.d("TB", ID + "\t" + Location + "\t" + Longitude + "\t" + Latitude + "\t" + TimeStamp + "\t" + BD09Longitude + "\t" + BD09Latitude);
                 BigDecimal bigDecimalLongitude = BigDecimal.valueOf(Double.parseDouble(Longitude));
                 BigDecimal bigDecimalLatitude = BigDecimal.valueOf(Double.parseDouble(Latitude));
@@ -796,6 +891,7 @@ public class JoyStick extends View {
                 item.put(HistoryActivity.KEY_TIME, GoUtils.timeStamp2Date(Long.toString(TimeStamp)));
                 item.put(HistoryActivity.KEY_LNG_LAT_WGS, "[经度:" + doubleLongitude + " 纬度:" + doubleLatitude + "]");
                 item.put(HistoryActivity.KEY_LNG_LAT_CUSTOM, "[经度:" + doubleBDLongitude + " 纬度:" + doubleBDLatitude + "]");
+                item.put(HistoryActivity.KEY_FAVORITE, favorite ? "★" : "");
                 mAllRecord.add(item);
             }
             cursor.close();
@@ -818,8 +914,8 @@ public class JoyStick extends View {
                         mContext,
                         list,
                         R.layout.history_item,
-                        new String[]{HistoryActivity.KEY_ID, HistoryActivity.KEY_LOCATION, HistoryActivity.KEY_TIME, HistoryActivity.KEY_LNG_LAT_WGS, HistoryActivity.KEY_LNG_LAT_CUSTOM}, // 与下面数组元素要一一对应
-                        new int[]{R.id.LocationID, R.id.LocationText, R.id.TimeText, R.id.WGSLatLngText, R.id.BDLatLngText});
+                        new String[]{HistoryActivity.KEY_ID, HistoryActivity.KEY_LOCATION, HistoryActivity.KEY_TIME, HistoryActivity.KEY_LNG_LAT_WGS, HistoryActivity.KEY_LNG_LAT_CUSTOM, HistoryActivity.KEY_FAVORITE}, // 与下面数组元素要一一对应
+                        new int[]{R.id.LocationID, R.id.LocationText, R.id.TimeText, R.id.WGSLatLngText, R.id.BDLatLngText, R.id.FavoriteText});
                 mRecordListView.setAdapter(simAdapt);
             } catch (Exception e) {
                 Log.e("JOYSTICK", "ERROR - showHistory");

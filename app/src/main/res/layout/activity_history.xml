@@ -3,23 +3,27 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:layout_gravity="center_vertical"
-    android:gravity="center_vertical"
+    android:background="@color/surface"
     android:orientation="vertical">
 
     <LinearLayout
         android:id="@+id/search_linear"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/space_md"
+        android:layout_marginTop="@dimen/space_sm"
+        android:layout_marginEnd="@dimen/space_md"
+        android:background="@drawable/bg_surface_panel"
+        android:elevation="4dp"
         android:orientation="horizontal"
+        android:paddingStart="@dimen/space_sm"
+        android:paddingEnd="@dimen/space_sm"
         android:visibility="gone">
 
         <SearchView
             android:id="@+id/searchView"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:layout_gravity="end|bottom"
-            android:layout_marginTop="5dp"
+            android:layout_height="48dp"
             android:iconifiedByDefault="true"
             android:queryHint="请输入搜索内容" />
     </LinearLayout>
@@ -27,18 +31,29 @@
     <TextView
         android:id="@+id/record_no_textview"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:padding="@dimen/space_xl"
         android:text="@string/history_idle"
-        android:textSize="17sp"
-        android:padding="10dp"
         android:textAlignment="center"
-        android:layout_gravity="center"/>
+        android:textColor="@color/on_surface_variant"
+        android:textSize="16sp" />
 
     <ListView
         android:id="@+id/record_list_view"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:visibility="gone">
-    </ListView>
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:divider="@android:color/transparent"
+        android:dividerHeight="8dp"
+        android:listSelector="@android:color/transparent"
+        android:paddingStart="@dimen/space_md"
+        android:paddingTop="@dimen/space_md"
+        android:paddingEnd="@dimen/space_md"
+        android:paddingBottom="@dimen/space_xl"
+        android:scrollbars="vertical"
+        android:visibility="gone" />
 
 </LinearLayout>

@@ -1,85 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:background="@drawable/bg_surface_panel"
+    android:elevation="8dp"
     android:orientation="vertical"
-    android:paddingStart="6dp"
-    android:paddingEnd="10dp"
-    android:background="@drawable/border_window">
+    android:padding="@dimen/space_md">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:gravity="center_vertical"
         android:orientation="horizontal">
 
         <ImageButton
             android:id="@+id/poi_fly"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_marginEnd="5dp"
-            android:contentDescription="@null"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
             android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:theme="@style/RippleWhite"
+            android:contentDescription="@string/fly_here"
+            android:padding="10dp"
             android:src="@drawable/ic_fly"
             app:tint="@color/colorAccent" />
 
         <LinearLayout
-            android:layout_width="match_parent"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_gravity="center_vertical"
+            android:layout_marginStart="@dimen/space_sm"
+            android:layout_weight="1"
             android:orientation="vertical">
+
             <TextView
                 android:id="@+id/poi_longitude"
-                android:textSize="16sp"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"/>
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/on_surface"
+                android:textSize="15sp" />
+
             <TextView
                 android:id="@+id/poi_latitude"
-                android:textSize="16sp"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"/>
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-medium"
+                android:textColor="@color/on_surface"
+                android:textSize="15sp" />
         </LinearLayout>
     </LinearLayout>
 
     <TextView
         android:id="@+id/poi_address"
-        android:layout_marginStart="4dp"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_xs"
+        android:maxLines="2"
+        android:textColor="@color/on_surface_variant"
+        android:textSize="13sp" />
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="3dp"
-        android:layout_marginTop="6dp"
+        android:layout_height="48dp"
+        android:layout_marginTop="@dimen/space_sm"
+        android:background="@color/primary_container"
+        android:gravity="center"
         android:orientation="horizontal">
+
         <ImageButton
             android:id="@+id/poi_save"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
             android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:theme="@style/RippleWhite"
-            android:contentDescription="@null"
+            android:contentDescription="@string/search_favorite"
+            android:padding="12dp"
             android:src="@drawable/ic_save"
-            app:tint="@color/colorAccent"/>
+            app:tint="@color/favorite" />
+
         <ImageButton
             android:id="@+id/poi_copy"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:layout_height="match_parent"
             android:layout_weight="1"
-            android:contentDescription="@null"
-            android:theme="@style/RippleWhite"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/copy_coordinate"
+            android:padding="12dp"
             android:src="@drawable/ic_copy"
-            app:tint="@color/colorAccent"/>
+            app:tint="@color/colorAccent" />
+
         <ImageButton
             android:id="@+id/poi_share"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
             android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@null"
-            android:theme="@style/RippleWhite"
+            android:contentDescription="@string/share_coordinate"
+            android:padding="12dp"
             android:src="@drawable/ic_share"
-            app:tint="@color/colorAccent"/>
+            app:tint="@color/colorAccent" />
     </LinearLayout>
 </LinearLayout>

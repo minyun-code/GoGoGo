@@ -1,45 +1,57 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:baselineAligned="false">
+    android:layout_height="wrap_content"
+    android:minHeight="72dp"
+    android:background="@drawable/bg_list_item"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="@dimen/space_md"
+    android:paddingTop="@dimen/space_sm"
+    android:paddingEnd="@dimen/space_sm"
+    android:paddingBottom="@dimen/space_sm">
 
     <LinearLayout
         android:layout_width="0dp"
-        android:layout_height="match_parent"
-        android:layout_gravity="center_vertical"
+        android:layout_height="wrap_content"
         android:layout_weight="1"
-        android:gravity="center_vertical"
-        android:layout_margin="7dp"
-        android:orientation="vertical"
-        tools:ignore="UselessParent">
+        android:orientation="vertical">
 
         <TextView
             android:id="@+id/poi_name"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text=""
-            android:textSize="20sp" />
+            style="@style/ListTitleText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
 
         <TextView
             android:id="@+id/poi_address"
-            android:layout_width="wrap_content"
+            style="@style/ListSupportingText"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="" />
+            android:layout_marginTop="2dp" />
 
         <TextView
             android:id="@+id/poi_longitude"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text=""
             android:visibility="gone" />
 
         <TextView
             android:id="@+id/poi_latitude"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text=""
             android:visibility="gone" />
     </LinearLayout>
+
+    <ImageButton
+        android:id="@+id/poi_save"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_marginStart="@dimen/space_sm"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/search_favorite"
+        android:focusable="false"
+        android:padding="11dp"
+        android:src="@drawable/ic_save"
+        android:tint="@color/favorite" />
 </LinearLayout>

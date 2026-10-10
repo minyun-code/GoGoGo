@@ -8,107 +8,110 @@
     tools:context=".MainActivity"
     tools:showIn="@layout/main_content">
 
-    <RelativeLayout
-        android:layout_width="match_parent"
-        android:layout_height="match_parent">
+    <com.baidu.mapapi.map.MapView
+        android:id="@+id/bdMapView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:clickable="true"
+        android:focusable="true"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
 
-        <com.baidu.mapapi.map.MapView
-            android:id="@+id/bdMapView"
-            android:layout_width="fill_parent"
-            android:layout_height="fill_parent"
-            android:clickable="true"
-            android:focusable="true" />
+    <RadioGroup
+        android:id="@+id/RadioGroupMapType"
+        android:layout_width="108dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_md"
+        android:layout_marginEnd="@dimen/space_md"
+        android:background="@drawable/bg_map_control"
+        android:elevation="6dp"
+        android:orientation="vertical"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
 
-        <RadioGroup
-            android:id="@+id/RadioGroupMapType"
-            android:layout_width="90dp"
-            android:layout_height="wrap_content"
-            android:layout_alignParentEnd="true"
-            android:layout_alignParentTop="true"
-            android:layout_marginEnd="5dp"
-            android:layout_marginTop="4dip"
-            android:orientation="vertical">
+        <RadioButton
+            android:id="@+id/mapNormal"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:buttonTint="@color/colorAccent"
+            android:checked="true"
+            android:gravity="center_vertical"
+            android:paddingEnd="6dp"
+            android:text="@string/map_pic_normal"
+            android:textColor="@color/on_surface"
+            android:textSize="14sp" />
 
-            <RadioButton
-                android:id="@+id/mapNormal"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:checked="true"
-                android:minHeight="48dp"
-                android:text="@string/map_pic_normal"
-                android:textColor="#00796B" />
+        <RadioButton
+            android:id="@+id/mapSatellite"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
+            android:buttonTint="@color/colorAccent"
+            android:gravity="center_vertical"
+            android:paddingEnd="6dp"
+            android:text="@string/map_pic_sate"
+            android:textColor="@color/on_surface"
+            android:textSize="14sp" />
+    </RadioGroup>
 
-            <RadioButton
-                android:id="@+id/mapSatellite"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:minHeight="48dp"
-                android:text="@string/map_pic_sate"
-                android:textColor="#00796B" />
-        </RadioGroup>
-
-        <ImageButton
-            android:id="@+id/cur_position"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_alignParentEnd="true"
-            android:layout_marginTop="350dp"
-            android:layout_marginEnd="10dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/cur_position"
-            android:theme="@style/RippleWhite"
-            app:srcCompat="@drawable/ic_home_position"
-            app:tint="@color/colorAccent" />
-
-        <ImageButton
-            android:id="@+id/zoom_in"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_alignParentEnd="true"
-            android:layout_marginTop="383dp"
-            android:layout_marginEnd="10dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/zoom_in"
-            android:theme="@style/RippleWhite"
-            app:srcCompat="@drawable/ic_zoom_in"
-            app:tint="@color/colorAccent" />
-
-        <ImageButton
-            android:id="@+id/zoom_out"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_alignParentEnd="true"
-            android:layout_marginTop="416dp"
-            android:layout_marginEnd="10dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/zoom_out"
-            android:theme="@style/RippleWhite"
-            app:srcCompat="@drawable/ic_zoom_out"
-            app:tint="@color/colorAccent" />
+    <LinearLayout
+        android:id="@+id/map_control_group"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="@dimen/space_md"
+        android:background="@drawable/bg_map_control"
+        android:elevation="6dp"
+        android:orientation="vertical"
+        app:layout_constraintBottom_toTopOf="@id/map_statement"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/RadioGroupMapType"
+        app:layout_constraintVertical_bias="0.72">
 
         <ImageButton
             android:id="@+id/input_pos"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_alignParentEnd="true"
-            android:layout_marginTop="240dp"
-            android:layout_marginEnd="10dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
+            style="@style/MapControlButton"
             android:contentDescription="@string/input_button"
-            android:theme="@style/RippleWhite"
-            app:srcCompat="@drawable/ic_input"
-            app:tint="@color/colorAccent" />
+            android:src="@drawable/ic_input" />
 
+        <ImageButton
+            android:id="@+id/favorite_position"
+            style="@style/MapControlButton"
+            android:contentDescription="@string/search_favorite"
+            android:src="@drawable/ic_save" />
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_alignParentBottom="true"
-            android:gravity="center_horizontal|center_vertical"
-            android:textSize="10sp"
-            android:text="@string/app_statement"
-            tools:ignore="SmallSp" />
-    </RelativeLayout>
+        <ImageButton
+            android:id="@+id/cur_position"
+            style="@style/MapControlButton"
+            android:contentDescription="@string/cur_position"
+            android:src="@drawable/ic_home_position" />
+
+        <ImageButton
+            android:id="@+id/zoom_in"
+            style="@style/MapControlButton"
+            android:contentDescription="@string/zoom_in"
+            android:src="@drawable/ic_zoom_in" />
+
+        <ImageButton
+            android:id="@+id/zoom_out"
+            style="@style/MapControlButton"
+            android:contentDescription="@string/zoom_out"
+            android:src="@drawable/ic_zoom_out" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/map_statement"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="@dimen/space_sm"
+        android:background="@drawable/bg_statement"
+        android:gravity="center"
+        android:text="@string/app_statement"
+        android:textColor="@color/on_surface_variant"
+        android:textSize="10sp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        tools:ignore="SmallSp" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>

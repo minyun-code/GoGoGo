@@ -1,87 +1,112 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="300dp"
     android:layout_height="500dp"
     android:background="@drawable/border_window"
-    android:orientation="vertical">
+    android:elevation="12dp">
 
     <TextView
         android:id="@+id/joystick_map_tips"
         android:layout_width="match_parent"
-        android:layout_height="40dp"
-        android:gravity="center_horizontal|center_vertical"
-        android:textSize="18sp"
-        android:text="@string/joystick_map_tips"/>
+        android:layout_height="48dp"
+        android:background="@color/primary_container"
+        android:fontFamily="sans-serif-medium"
+        android:gravity="center"
+        android:paddingStart="48dp"
+        android:paddingEnd="48dp"
+        android:text="@string/joystick_map_tips"
+        android:textColor="@color/on_surface"
+        android:textSize="16sp" />
 
     <SearchView
         android:id="@+id/joystick_map_searchView"
         android:layout_width="match_parent"
-        android:layout_height="40dp"
-        android:layout_marginTop="0dp"
-        android:layout_marginEnd="40dp"
+        android:layout_height="48dp"
+        android:layout_marginEnd="44dp"
+        android:background="@android:color/transparent"
         android:iconifiedByDefault="true"
-        app:showAsAction="collapseActionView|ifRoom"
-        android:queryHint="@string/app_search_tips" />
+        android:queryHint="@string/app_search_tips"
+        app:showAsAction="collapseActionView|ifRoom" />
 
     <ImageButton
         android:id="@+id/map_close"
-        android:layout_width="@dimen/joystick_btn_width"
-        android:layout_height="@dimen/joystick_btn_height"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
         android:layout_gravity="top|end"
-        android:layout_marginEnd="3dp"
-        android:layout_marginTop="5dp"
+        android:layout_marginTop="4dp"
+        android:layout_marginEnd="4dp"
         android:background="?android:attr/selectableItemBackgroundBorderless"
-        android:contentDescription="@null"
+        android:contentDescription="@string/close_panel"
+        android:padding="10dp"
         android:src="@drawable/ic_close"
-        android:theme="@style/RippleWhite" />
+        android:tint="@color/on_surface_variant" />
 
     <FrameLayout
-        android:layout_marginTop="40dp"
         android:layout_width="match_parent"
-        android:layout_height="450dp">
+        android:layout_height="match_parent"
+        android:layout_marginTop="48dp">
 
         <com.baidu.mapapi.map.MapView
             android:id="@+id/map_joystick"
             android:layout_width="match_parent"
-            android:layout_height="match_parent">
-        </com.baidu.mapapi.map.MapView>
+            android:layout_height="match_parent" />
 
         <ImageButton
             android:id="@+id/btnBack"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
-            android:layout_marginTop="240dp"
-            android:layout_marginStart="280dp"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@null"
-            android:theme="@style/RippleWhite"
-            android:src="@drawable/ic_home_position"/>
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_gravity="center_vertical|end"
+            android:layout_marginEnd="@dimen/space_sm"
+            android:background="@drawable/circle_shape_bg"
+            android:contentDescription="@string/cur_position"
+            android:padding="11dp"
+            android:src="@drawable/ic_home_position"
+            android:tint="@color/colorAccent" />
 
         <ImageButton
             android:id="@+id/btnGo"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_gravity="center_horizontal|center_vertical|bottom"
-            android:layout_marginBottom="40dp"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:layout_gravity="center_horizontal|bottom"
+            android:layout_marginBottom="@dimen/space_lg"
             android:background="@drawable/circle_shape_bg"
-            android:contentDescription="@null"
+            android:contentDescription="@string/fly_here"
+            android:padding="13dp"
             android:src="@drawable/ic_position"
-            android:theme="@style/RippleWhite" />
+            android:tint="@color/colorPrimary" />
+
+        <ImageButton
+            android:id="@+id/btnSaveLocation"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="end|bottom"
+            android:layout_marginEnd="@dimen/space_lg"
+            android:layout_marginBottom="18dp"
+            android:background="@drawable/circle_shape_bg"
+            android:contentDescription="@string/search_favorite"
+            android:padding="12dp"
+            android:src="@drawable/ic_save"
+            android:tint="@color/favorite" />
 
         <LinearLayout
             android:id="@+id/map_search_linear"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#ddffffff"
+            android:layout_margin="@dimen/space_sm"
+            android:background="@drawable/bg_surface_panel"
+            android:elevation="8dp"
+            android:padding="@dimen/space_xs"
             android:visibility="gone">
+
             <ListView
                 android:id="@+id/map_search_list_view"
                 android:layout_width="match_parent"
-                android:layout_margin="10dp"
-                android:layout_height="wrap_content">
-            </ListView>
+                android:layout_height="wrap_content"
+                android:divider="@android:color/transparent"
+                android:dividerHeight="6dp"
+                android:listSelector="@android:color/transparent"
+                android:padding="@dimen/space_xs" />
         </LinearLayout>
 
     </FrameLayout>
