@@ -44,6 +44,19 @@ public class HistoryDatabaseTest {
     }
 
     @Test
+    public void favoritePreservesOriginalGpsCoordinatesWithoutRoundTrip() {
+        double[] original = {121.4737, 31.2304};
+        double[] map = com.zcshou.utils.MapUtils.wgs2bd09(original[0], original[1]);
+        assertTrue(saveLocation(database, "Manual GPS", map[0], map[1], true, original));
+        try (Cursor cursor = database.rawQuery("SELECT " + DB_COLUMN_LONGITUDE_WGS84 + ", "
+                + DB_COLUMN_LATITUDE_WGS84 + " FROM " + TABLE_NAME, null)) {
+            assertTrue(cursor.moveToFirst());
+            assertEquals(String.valueOf(original[0]), cursor.getString(0));
+            assertEquals(String.valueOf(original[1]), cursor.getString(1));
+        }
+    }
+
+    @Test
     public void editedLabelSurvivesReuseAndLateAddressResponse() {
         assertTrue(saveHistoryLocation(database, location("Address", 100, false)));
         updateHistoryLocation(database, "1", "My label");

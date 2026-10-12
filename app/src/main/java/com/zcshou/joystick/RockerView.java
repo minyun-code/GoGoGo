@@ -149,12 +149,23 @@ public class RockerView extends View {
                 }
                 performClick();
                 break;
+            case MotionEvent.ACTION_CANCEL:
+                isClick = false;
+                resetPosition();
+                break;
         }
 
         return true;
     }
 
     private void moveToPosition(float x, float y) {
+        // An accepted initial fix can arrive before the overlay's first layout pass.
+        if (outerCircleRadius <= innerCircleRadius) {
+            if (mListener != null) {
+                mListener.clickAngleInfo(true, 0, 0);
+            }
+            return;
+        }
         float distance = (float) Math.sqrt(Math.pow(x-viewCenterX, 2) + Math.pow(y-viewCenterY, 2)); //触摸点与view中心距离
 
         if (distance < outerCircleRadius-innerCircleRadius) {
@@ -178,7 +189,13 @@ public class RockerView extends View {
         invalidate();
         double angle = Math.toDegrees(Math.atan2((innerCenterX - viewCenterX), (innerCenterY-viewCenterY))) - 90;
         double r = Math.sqrt(Math.pow(innerCenterX - viewCenterX, 2) + Math.pow(innerCenterY-viewCenterY, 2)) / (outerCircleRadius-innerCircleRadius);
-        mListener.clickAngleInfo(true, angle, r);
+        if (mListener != null) {
+            mListener.clickAngleInfo(true, angle, Double.isFinite(r) ? r : 0);
+        }
+    }
+
+    public void resetPosition() {
+        moveToPosition(viewCenterX, viewCenterY);
     }
 
     private static Bitmap getBitmap(VectorDrawable vectorDrawable) {

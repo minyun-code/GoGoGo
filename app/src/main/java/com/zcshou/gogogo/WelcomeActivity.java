@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
+import android.os.Build;
 import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.text.TextPaint;
@@ -89,8 +90,7 @@ public class WelcomeActivity extends AppCompatActivity {
     }
 
     private boolean hasLocationPermissions() {
-        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-                && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+        return GoUtils.hasLocationPermission(this);
     }
 
     private void checkDefaultPermissions() {
@@ -99,12 +99,14 @@ public class WelcomeActivity extends AppCompatActivity {
         }
         ArrayList<String> requiredPermissions = new ArrayList<>();
         // 定位精确位置
-        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (!hasLocationPermissions()) {
             requiredPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
             // Android 12 requires fine and coarse location to be requested together.
             requiredPermissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
-        } else if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            requiredPermissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requiredPermissions.add(Manifest.permission.POST_NOTIFICATIONS);
         }
 
         // App-owned logs and updates do not require external-storage or phone-state permission.
@@ -117,16 +119,6 @@ public class WelcomeActivity extends AppCompatActivity {
     private void startMainActivity() {
         if (!checkBox.isChecked()) {
             GoUtils.DisplayToast(this, getResources().getString(R.string.app_error_agreement));
-            return;
-        }
-
-        if (!GoUtils.isNetworkAvailable(this)) {
-            GoUtils.DisplayToast(this, getResources().getString(R.string.app_error_network));
-            return;
-        }
-
-        if (!GoUtils.isGpsOpened(this)) {
-            GoUtils.DisplayToast(this, getResources().getString(R.string.app_error_gps));
             return;
         }
 

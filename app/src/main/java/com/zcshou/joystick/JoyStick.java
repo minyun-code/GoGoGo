@@ -42,6 +42,8 @@ import com.zcshou.gogogo.SearchResultAdapter;
 import com.zcshou.utils.GoUtils;
 import com.zcshou.utils.MapUtils;
 import com.zcshou.utils.MapSearchUtils;
+import com.zcshou.utils.InputUtils;
+import com.zcshou.utils.MockLocationEngine;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -51,7 +53,6 @@ import java.util.List;
 import java.util.Map;
 
 public class JoyStick extends View {
-    private static final int DivGo = 1000;    /* 移动的时间间隔，单位 ms */
     private static final int WINDOW_TYPE_JOYSTICK = 0;
     private static final int WINDOW_TYPE_MAP = 1;
     private static final int WINDOW_TYPE_HISTORY = 2;
@@ -71,15 +72,15 @@ public class JoyStick extends View {
 
     // 移动
     private View mJoystickLayout;
-    private GoUtils.TimeCount mTimer;
     private boolean isMove;
     private boolean isDestroyed;
+    private boolean mResettingMovement;
     private double mSpeed = 1.2;        /* 默认的速度，单位 m/s */
     private double mAltitude = 55.0;
+    private float mCurrentBearing;
+    private float mCurrentAccuracy;
     private double mAngle = 0;
     private double mR = 0;
-    private double disLng = 0;
-    private double disLat = 0;
     private final SharedPreferences sharedPreferences;
     /* 历史记录悬浮窗相关 */
     private FrameLayout mHistoryLayout;
@@ -93,6 +94,8 @@ public class JoyStick extends View {
     private LatLng mCurMapLngLat;
     private LatLng mMarkMapLngLat;
     private String mMarkMapName;
+    private long mPendingPositionId;
+    private LatLng mPendingMapPoint;
     private SuggestionSearch mSuggestionSearch;
     private ListView mSearchList;
     private LinearLayout mSearchLayout;
@@ -158,8 +161,52 @@ public class JoyStick extends View {
         double[] lngLat = MapUtils.wgs2bd09(lng, lat);
         mCurMapLngLat = new LatLng(lngLat[1], lngLat[0]);
         mAltitude = alt;
+        mCurrentBearing = 0;
 
-        resetBaiduMap();
+        if (mMarkMapLngLat == null || (mPendingMapPoint != null
+                && mMarkMapLngLat.latitude == mPendingMapPoint.latitude
+                && mMarkMapLngLat.longitude == mPendingMapPoint.longitude)) {
+            resetBaiduMap();
+        }
+    }
+
+    public void acknowledgePosition(long requestId) {
+        if (mPendingPositionId != 0 && requestId >= mPendingPositionId) {
+            if (requestId == mPendingPositionId) {
+                GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_location_ok));
+            }
+            mPendingPositionId = 0;
+            mPendingMapPoint = null;
+        }
+    }
+
+    public void updateCurrentPosition(double lng, double lat, double alt, double bearing, float accuracy) {
+        if (isDestroyed) {
+            return;
+        }
+        double[] mapPosition = MapUtils.wgs2bd09(lng, lat);
+        mCurMapLngLat = new LatLng(mapPosition[1], mapPosition[0]);
+        mAltitude = alt;
+        mCurrentBearing = (float) bearing;
+        mCurrentAccuracy = accuracy;
+        // Refresh the location layer without clearing the user's selected destination or moving the camera.
+        if (mMapLayout.getParent() != null) {
+            mBaiduMap.setMyLocationData(new MyLocationData.Builder()
+                    .latitude(mCurMapLngLat.latitude).longitude(mCurMapLngLat.longitude)
+                    .direction((float) bearing).accuracy(accuracy).build());
+        }
+    }
+
+    public void stopMovement() {
+        isMove = false;
+        mR = 0;
+        mResettingMovement = true;
+        try {
+            ((RockerView) mJoystickLayout.findViewById(R.id.joystick_rocker)).resetPosition();
+            ((ButtonView) mJoystickLayout.findViewById(R.id.joystick_button)).resetDirection();
+        } finally {
+            mResettingMovement = false;
+        }
     }
 
     public void show() {
@@ -221,9 +268,6 @@ public class JoyStick extends View {
         }
         isDestroyed = true;
         isMove = false;
-        if (mTimer != null) {
-            mTimer.cancel();
-        }
         mListener = null;
         if (mMapLayout.getParent() != null) {
             mWindowManager.removeViewImmediate(mMapLayout);
@@ -265,32 +309,7 @@ public class JoyStick extends View {
 
     @SuppressLint("InflateParams")
     private void initJoyStickView() {
-        /* 移动计时器 */
-        mTimer = new GoUtils.TimeCount(DivGo, DivGo);
-        mTimer.setListener(new GoUtils.TimeCount.TimeCountListener() {
-            @Override
-            public void onTick(long millisUntilFinished) {
-
-            }
-
-            @Override
-            public void onFinish() {
-                if (isDestroyed || !isMove || mListener == null) {
-                    return;
-                }
-                // 注意：这里的 x y 与 圆中角度的对应问题（以 X 轴正向为 0 度）且转换为 km
-                disLng = mSpeed * (double)(DivGo / 1000) * mR * Math.cos(mAngle * 2 * Math.PI / 360) / 1000;// 注意安卓中的三角函数使用的是弧度
-                disLat = mSpeed * (double)(DivGo / 1000) * mR * Math.sin(mAngle * 2 * Math.PI / 360) / 1000;// 注意安卓中的三角函数使用的是弧度
-                mListener.onMoveInfo(mSpeed, disLng, disLat, 90.0F-mAngle);
-                mTimer.start();
-            }
-        });
-        // 获取参数区设置的速度
-        try {
-            mSpeed = Double.parseDouble(sharedPreferences.getString("setting_walk", getResources().getString(R.string.setting_walk_default)));
-        } catch (NumberFormatException e) {  // GOOD: The exception is caught.
-            mSpeed = 1.2;
-        }
+        mSpeed = readSpeed("setting_walk", 1.2);
         mJoystickLayout = inflater.inflate(R.layout.joystick, null);
 
         /* 整个摇杆拖动事件处理 */
@@ -324,11 +343,8 @@ public class JoyStick extends View {
                 isRun = false;
                 btnBike.setColorFilter(getResources().getColor(R.color.black, mContext.getTheme()));
                 isBike = false;
-                try {
-                    mSpeed = Double.parseDouble(sharedPreferences.getString("setting_walk", getResources().getString(R.string.setting_walk_default)));
-                } catch (NumberFormatException e) {  // GOOD: The exception is caught.
-                    mSpeed = 1.2;
-                }
+                mSpeed = readSpeed("setting_walk", 1.2);
+                updateMotionSpeed();
             }
         });
         /* 默认为步行 */
@@ -345,11 +361,8 @@ public class JoyStick extends View {
                 isWalk = false;
                 btnBike.setColorFilter(getResources().getColor(R.color.black, mContext.getTheme()));
                 isBike = false;
-                try {
-                    mSpeed = Double.parseDouble(sharedPreferences.getString("setting_run", getResources().getString(R.string.setting_run_default)));
-                } catch (NumberFormatException e) {  // GOOD: The exception is caught.
-                    mSpeed = 3.6;
-                }
+                mSpeed = readSpeed("setting_run", 3.6);
+                updateMotionSpeed();
             }
         });
         /* 自行车按键的点击处理 */
@@ -363,11 +376,8 @@ public class JoyStick extends View {
                 isWalk = false;
                 btnRun.setColorFilter(getResources().getColor(R.color.black, mContext.getTheme()));
                 isRun = false;
-                try {
-                    mSpeed = Double.parseDouble(sharedPreferences.getString("setting_bike", getResources().getString(R.string.setting_bike_default)));
-                } catch (NumberFormatException e) {  // GOOD: The exception is caught.
-                    mSpeed = 10.0;
-                }
+                mSpeed = readSpeed("setting_bike", 10);
+                updateMotionSpeed();
             }
         });
         /* 方向键点击处理 */
@@ -388,28 +398,38 @@ public class JoyStick extends View {
         }
     }
 
+    private double readSpeed(String key, double fallback) {
+        try {
+            double speed = InputUtils.parseFiniteDouble(sharedPreferences.getString(key, String.valueOf(fallback)));
+            return speed >= 0 && speed <= MockLocationEngine.MAX_SPEED_METERS_PER_SECOND ? speed : fallback;
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private void updateMotionSpeed() {
+        if (isMove && !isDestroyed && mListener != null) {
+            mListener.onMotionInfo(mSpeed * mR, 90.0 - mAngle);
+        }
+    }
+
     private void processDirection(boolean auto, double angle, double r) {
-        if (isDestroyed || mListener == null) {
+        if (isDestroyed || mResettingMovement || mListener == null) {
             return;
         }
         if (r <= 0) {
-            mTimer.cancel();
             isMove = false;
+            mR = 0;
+            mListener.onMotionInfo(0, 90.0 - mAngle);
         } else {
             mAngle = angle;
-            mR = r;
+            mR = Math.min(1, r);
             if (auto) {
-                if (!isMove) {
-                    mTimer.start();
-                    isMove = true;
-                }
+                isMove = true;
+                mListener.onMotionInfo(mSpeed * mR, 90.0 - mAngle);
             } else {
-                mTimer.cancel();
                 isMove = false;
-                // 注意：这里的 x y 与 圆中角度的对应问题（以 X 轴正向为 0 度）且转换为 km
-                disLng = mSpeed * (double)(DivGo / 1000) * mR * Math.cos(mAngle * 2 * Math.PI / 360) / 1000;// 注意安卓中的三角函数使用的是弧度
-                disLat = mSpeed * (double)(DivGo / 1000) * mR * Math.sin(mAngle * 2 * Math.PI / 360) / 1000;// 注意安卓中的三角函数使用的是弧度
-                mListener.onMoveInfo(mSpeed, disLng, disLat, 90.0F-mAngle);
+                mListener.onStepInfo(mSpeed * mR, 90.0 - mAngle);
             }
         }
     }
@@ -448,8 +468,9 @@ public class JoyStick extends View {
     }
 
     public interface JoyStickClickListener {
-        void onMoveInfo(double speed, double disLng, double disLat, double angle);
-        void onPositionInfo(double lng, double lat, double alt);
+        void onMotionInfo(double speed, double angle);
+        void onStepInfo(double distanceMeters, double angle);
+        long onPositionInfo(double lng, double lat, double alt);
     }
 
 
@@ -582,18 +603,12 @@ public class JoyStick extends View {
 
             if (mMarkMapLngLat == null) {
                 GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_error_location));
+            } else if (mPendingPositionId != 0) {
+                GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_location_updating));
             } else {
-                if (mCurMapLngLat != mMarkMapLngLat) {
-                    mCurMapLngLat = mMarkMapLngLat;
-                    mMarkMapLngLat = null;
-
-                    double[] lngLat = MapUtils.bd2wgs(mCurMapLngLat.longitude, mCurMapLngLat.latitude);
-                    mListener.onPositionInfo(lngLat[0], lngLat[1], mAltitude);
-
-                    resetBaiduMap();
-
-                    GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_location_ok));
-                }
+                double[] lngLat = MapUtils.bd2wgs(mMarkMapLngLat.longitude, mMarkMapLngLat.latitude);
+                mPendingMapPoint = mMarkMapLngLat;
+                mPendingPositionId = mListener.onPositionInfo(lngLat[0], lngLat[1], mAltitude);
             }
         });
         btnGo.setColorFilter(getResources().getColor(R.color.colorAccent, mContext.getTheme()));
@@ -687,6 +702,9 @@ public class JoyStick extends View {
     }
 
     private void resetBaiduMap() {
+        if (mCurMapLngLat == null || isDestroyed) {
+            return;
+        }
         mBaiduMap.clear();
         mMarkMapLngLat = null;
         mMarkMapName = null;
@@ -694,6 +712,8 @@ public class JoyStick extends View {
         MyLocationData locData = new MyLocationData.Builder()
                 .latitude(mCurMapLngLat.latitude)
                 .longitude(mCurMapLngLat.longitude)
+                .accuracy(mCurrentAccuracy)
+                .direction(mCurrentBearing)
                 .build();
         mBaiduMap.setMyLocationData(locData);
 
@@ -827,24 +847,29 @@ public class JoyStick extends View {
             mSearchView.onActionViewCollapsed();
             tips.setVisibility(VISIBLE);
 
-            // wgs84坐标
-            String wgs84LatLng = (String) ((TextView) view.findViewById(R.id.WGSLatLngText)).getText();
-            wgs84LatLng = wgs84LatLng.substring(wgs84LatLng.indexOf('[') + 1, wgs84LatLng.indexOf(']'));
-            String[] wgs84latLngStr = wgs84LatLng.split(" ");
-            String wgs84Longitude = wgs84latLngStr[0].substring(wgs84latLngStr[0].indexOf(':') + 1);
-            String wgs84Latitude = wgs84latLngStr[1].substring(wgs84latLngStr[1].indexOf(':') + 1);
-
-            mListener.onPositionInfo(Double.parseDouble(wgs84Longitude), Double.parseDouble(wgs84Latitude), mAltitude);
-
-            // 注意这里在选择位置之后需要刷新地图
-            String bdLatLng = (String) ((TextView) view.findViewById(R.id.BDLatLngText)).getText();
-            bdLatLng = bdLatLng.substring(bdLatLng.indexOf('[') + 1, bdLatLng.indexOf(']'));
-            String[] bdLatLngStr = bdLatLng.split(" ");
-            String bdLongitude = bdLatLngStr[0].substring(bdLatLngStr[0].indexOf(':') + 1);
-            String bdLatitude = bdLatLngStr[1].substring(bdLatLngStr[1].indexOf(':') + 1);
-            mCurMapLngLat = new LatLng(Double.parseDouble(bdLatitude), Double.parseDouble(bdLongitude));
-
-            GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_location_ok));
+            if (mPendingPositionId != 0) {
+                GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_location_updating));
+                return;
+            }
+            String recordId = ((TextView) view.findViewById(R.id.LocationID)).getText().toString();
+            try (DataBaseHistoryLocation helper = new DataBaseHistoryLocation(mContext);
+                 Cursor cursor = helper.getReadableDatabase().query(DataBaseHistoryLocation.TABLE_NAME,
+                         new String[] {DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_WGS84,
+                                 DataBaseHistoryLocation.DB_COLUMN_LATITUDE_WGS84},
+                         DataBaseHistoryLocation.DB_COLUMN_ID + " = ?", new String[] {recordId},
+                         null, null, null)) {
+                if (!cursor.moveToFirst()) {
+                    throw new IllegalArgumentException("Missing history position");
+                }
+                double longitude = InputUtils.parseFiniteDouble(cursor.getString(0));
+                double latitude = InputUtils.parseFiniteDouble(cursor.getString(1));
+                double[] mapPoint = MapUtils.wgs2bd09(longitude, latitude);
+                mPendingMapPoint = new LatLng(mapPoint[1], mapPoint[0]);
+                mPendingPositionId = mListener.onPositionInfo(longitude, latitude, mAltitude);
+            } catch (RuntimeException e) {
+                XLog.e("Invalid overlay history position", e);
+                GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_error_input));
+            }
         });
 
         fetchAllRecord();

@@ -10,56 +10,119 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ServiceInfo;
 import android.location.Criteria;
 import android.location.Location;
 import android.location.LocationManager;
 import android.location.provider.ProviderProperties;
 import android.os.Binder;
 import android.os.Build;
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
-import android.os.Message;
+import android.os.Looper;
 import android.os.Process;
 import android.os.SystemClock;
+import android.provider.Settings;
 
-import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
 
 import com.elvishew.xlog.XLog;
 import com.zcshou.gogogo.MainActivity;
 import com.zcshou.gogogo.R;
 import com.zcshou.joystick.JoyStick;
+import com.zcshou.utils.GoUtils;
+import com.zcshou.utils.MockLocationEngine;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 public class ServiceGo extends Service {
-    // 定位相关变量
-    public static final double DEFAULT_LAT = 36.667662;
-    public static final double DEFAULT_LNG = 117.027707;
-    public static final double DEFAULT_ALT = 55.0D;
-    public static final float DEFAULT_BEA = 0.0F;
-    private double mCurLat = DEFAULT_LAT;
-    private double mCurLng = DEFAULT_LNG;
-    private double mCurAlt = DEFAULT_ALT;
-    private float mCurBea = DEFAULT_BEA;
-    private double mSpeed = 1.2;        /* 默认的速度，单位 m/s */
-    private static final int HANDLER_MSG_ID = 0;
-    private static final String SERVICE_GO_HANDLER_NAME = "ServiceGoLocation";
-    private LocationManager mLocManager;
-    private HandlerThread mLocHandlerThread;
-    private Handler mLocHandler;
-    private volatile boolean isStop = false;
-    // 通知栏消息
-    private static final int SERVICE_GO_NOTE_ID = 1;
-    private static final String SERVICE_GO_NOTE_ACTION_JOYSTICK_SHOW = "ShowJoyStick";
-    private static final String SERVICE_GO_NOTE_ACTION_JOYSTICK_HIDE = "HideJoyStick";
-    private static final String SERVICE_GO_NOTE_CHANNEL_ID = "SERVICE_GO_NOTE";
-    private static final String SERVICE_GO_NOTE_CHANNEL_NAME = "SERVICE_GO_NOTE";
-    private NoteActionReceiver mActReceiver;
-    // 摇杆相关
-    private JoyStick mJoyStick;
+    public static final double DEFAULT_ALT = 55.0;
+    public static final float GPS_ACCURACY_METERS = 5.0f;
+    public static final float NETWORK_ACCURACY_METERS = 20.0f;
+    public static final String REQUEST_ID = "POSITION_REQUEST_ID";
+    private static final long MOVING_INTERVAL_MILLIS = 100;
+    private static final long STATIONARY_INTERVAL_MILLIS = 1000;
+    private static final int MAX_INJECTION_FAILURES = 3;
+    private static final int NOTE_ID = 1;
+    private static final String CHANNEL_ID = "SERVICE_GO_NOTE";
+    private static final String ACTION_SHOW = "com.zcshou.gogogo.SHOW_JOYSTICK";
+    private static final String ACTION_HIDE = "com.zcshou.gogogo.HIDE_JOYSTICK";
+    private static final String ACTION_STOP = "com.zcshou.gogogo.STOP_LOCATION";
 
+    public enum Status { STARTING, RUNNING, FAILED, STOPPED }
+
+    public static final class Snapshot {
+        public final Status status;
+        public final MockLocationEngine.Position position;
+        public final long requestId;
+        public final int errorMessage;
+
+        private Snapshot(Status status, MockLocationEngine.Position position, long requestId, int errorMessage) {
+            this.status = status;
+            this.position = position;
+            this.requestId = requestId;
+            this.errorMessage = errorMessage;
+        }
+    }
+
+    public interface Listener {
+        void onStateChanged(Snapshot snapshot);
+    }
+
+    private static volatile ServiceGo sActiveService;
+    private static final Object PROVIDER_LOCK = new Object();
+    private static final Map<String, ServiceGo> PROVIDER_OWNERS = new HashMap<>();
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+    private final MockLocationEngine mEngine = new MockLocationEngine();
+    private final List<String> mRegisteredProviders = new ArrayList<>();
     private final ServiceGoBinder mBinder = new ServiceGoBinder();
+    private volatile Snapshot mSnapshot = new Snapshot(Status.STARTING, null, 0, 0);
+    private volatile boolean isStop;
+    private final Object mStateLock = new Object();
+    private LocationManager mLocManager;
+    private HandlerThread mLocThread;
+    private Handler mLocHandler;
+    private JoyStick mJoyStick;
+    private BroadcastReceiver mActionReceiver;
+    private Listener mListener;
+    private boolean mProvidersReady;
+    private int mInjectionFailures;
+    private long mRequestedId;
+    private long mLastUiUpdate;
+    private long mLastDeliveredRequestId;
+    private boolean mFailureReported;
+
+    public static boolean isActive() {
+        ServiceGo service = sActiveService;
+        return service != null && !service.isStop
+                && service.mSnapshot.status != Status.FAILED;
+    }
+
+    private final Runnable mTick = new Runnable() {
+        @Override
+        public void run() {
+            if (isStop || mSnapshot.status == Status.FAILED) {
+                return;
+            }
+            try {
+                MockLocationEngine.Position position = mEngine.advance(SystemClock.elapsedRealtime());
+                inject(position);
+                if (isStop) {
+                    return;
+                }
+                mInjectionFailures = 0;
+                publish(Status.RUNNING, position, 0);
+                mLocHandler.postDelayed(this, position.speed > 0
+                        ? MOVING_INTERVAL_MILLIS : STATIONARY_INTERVAL_MILLIS);
+            } catch (RuntimeException e) {
+                handleInjectionFailure(e);
+            }
+        }
+    };
 
     @Override
     public IBinder onBind(Intent intent) {
@@ -69,279 +132,361 @@ public class ServiceGo extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-
-        mLocManager = (LocationManager) this.getSystemService(Context.LOCATION_SERVICE);
-
-        removeTestProviderNetwork();
-        addTestProviderNetwork();
-
-        removeTestProviderGPS();
-        addTestProviderGPS();
-
-        initGoLocation();
-
-        initNotification();
-
-        initJoyStick();
+        sActiveService = this;
+        mLocManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+        mLocThread = new HandlerThread("ServiceGoLocation", Process.THREAD_PRIORITY_DEFAULT);
+        mLocThread.start();
+        mLocHandler = new Handler(mLocThread.getLooper());
+        try {
+            // Enter foreground before inflating any map/overlay or registering providers.
+            initNotification();
+            initJoyStick();
+        } catch (RuntimeException e) {
+            fail(e);
+        }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent == null) {
-            stopSelf();
-            return START_NOT_STICKY;
+        if (intent == null || !intent.hasExtra(MainActivity.LNG_MSG_ID)
+                || !intent.hasExtra(MainActivity.LAT_MSG_ID)) {
+            fail(new IllegalArgumentException("A target position is required"));
+        } else {
+            setPosition(intent.getDoubleExtra(MainActivity.LNG_MSG_ID, Double.NaN),
+                    intent.getDoubleExtra(MainActivity.LAT_MSG_ID, Double.NaN),
+                    intent.getDoubleExtra(MainActivity.ALT_MSG_ID, DEFAULT_ALT),
+                    intent.getLongExtra(REQUEST_ID, 0));
         }
-        mCurLng = intent.getDoubleExtra(MainActivity.LNG_MSG_ID, DEFAULT_LNG);
-        mCurLat = intent.getDoubleExtra(MainActivity.LAT_MSG_ID, DEFAULT_LAT);
-        mCurAlt = intent.getDoubleExtra(MainActivity.ALT_MSG_ID, DEFAULT_ALT);
-
-        mJoyStick.setCurrentPosition(mCurLng, mCurLat, mCurAlt);
-
         return START_NOT_STICKY;
     }
 
-    @Override
-    public void onDestroy() {
-        isStop = true;
-        if (mLocHandler != null) {
-            mLocHandler.removeCallbacksAndMessages(null);
-        }
-        if (mLocHandlerThread != null) {
-            mLocHandlerThread.quitSafely();
-        }
-        if (mJoyStick != null) {
-            mJoyStick.destroy();
-        }
-
-        removeTestProviderNetwork();
-        removeTestProviderGPS();
-
-        if (mActReceiver != null) {
-            unregisterReceiver(mActReceiver);
-        }
-        stopForeground(STOP_FOREGROUND_REMOVE);
-
-        super.onDestroy();
-    }
-
-    private void initNotification() {
-        mActReceiver = new NoteActionReceiver();
-        IntentFilter filter = new IntentFilter();
-        filter.addAction(SERVICE_GO_NOTE_ACTION_JOYSTICK_SHOW);
-        filter.addAction(SERVICE_GO_NOTE_ACTION_JOYSTICK_HIDE);
-        registerReceiver(mActReceiver, filter);
-
-        NotificationChannel mChannel = new NotificationChannel(SERVICE_GO_NOTE_CHANNEL_ID, SERVICE_GO_NOTE_CHANNEL_NAME, NotificationManager.IMPORTANCE_DEFAULT);
-        NotificationManager notificationManager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-
-        if (notificationManager != null) {
-            notificationManager.createNotificationChannel(mChannel);
-        }
-
-        //准备intent
-        Intent clickIntent = new Intent(this, MainActivity.class);
-        PendingIntent clickPI = PendingIntent.getActivity(this, 1, clickIntent, PendingIntent.FLAG_IMMUTABLE);
-        Intent showIntent = new Intent(SERVICE_GO_NOTE_ACTION_JOYSTICK_SHOW);
-        PendingIntent showPendingPI = PendingIntent.getBroadcast(this, 0, showIntent, PendingIntent.FLAG_IMMUTABLE);
-        Intent hideIntent = new Intent(SERVICE_GO_NOTE_ACTION_JOYSTICK_HIDE);
-        PendingIntent hidePendingPI = PendingIntent.getBroadcast(this, 0, hideIntent, PendingIntent.FLAG_IMMUTABLE);
-
-        Notification notification = new NotificationCompat.Builder(this, SERVICE_GO_NOTE_CHANNEL_ID)
-                .setChannelId(SERVICE_GO_NOTE_CHANNEL_ID)
-                .setContentTitle(getResources().getString(R.string.app_name))
-                .setContentText(getResources().getString(R.string.app_service_tips))
-                .setContentIntent(clickPI)
-                .addAction(new NotificationCompat.Action(null, getResources().getString(R.string.note_show), showPendingPI))
-                .addAction(new NotificationCompat.Action(null, getResources().getString(R.string.note_hide), hidePendingPI))
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .build();
-
-        startForeground(SERVICE_GO_NOTE_ID, notification);
+    private void setPosition(double longitude, double latitude, double altitude, long requestId) {
+        mLocHandler.post(() -> {
+            if (isStop || mSnapshot.status == Status.FAILED) {
+                return;
+            }
+            try {
+                mEngine.setPosition(longitude, latitude, altitude, SystemClock.elapsedRealtime());
+                mRequestedId = requestId;
+                ensureProviders();
+                // This operation and every tick run on the same queue. There is only one tick chain.
+                mLocHandler.removeCallbacks(mTick);
+                mTick.run();
+            } catch (RuntimeException e) {
+                fail(e);
+            }
+        });
     }
 
     private void initJoyStick() {
         mJoyStick = new JoyStick(this);
         mJoyStick.setListener(new JoyStick.JoyStickClickListener() {
             @Override
-            public void onMoveInfo(double speed, double disLng, double disLat, double angle) {
-                mSpeed = speed;
-                // 根据当前的经纬度和距离，计算下一个经纬度
-                // Latitude: 1 deg = 110.574 km // 纬度的每度的距离大约为 110.574km
-                // Longitude: 1 deg = 111.320*cos(latitude) km  // 经度的每度的距离从0km到111km不等
-                // 具体见：http://wp.mlab.tw/?p=2200
-                mCurLng += disLng / (111.320 * Math.cos(Math.abs(mCurLat) * Math.PI / 180));
-                mCurLat += disLat / 110.574;
-                mCurBea = (float) angle;
+            public void onMotionInfo(double speed, double bearing) {
+                mLocHandler.post(() -> {
+                    if (isStop || mSnapshot.status != Status.RUNNING) {
+                        return;
+                    }
+                    try {
+                        boolean wasMoving = mSnapshot.position != null && mSnapshot.position.speed > 0;
+                        mEngine.setMotion(speed, bearing, SystemClock.elapsedRealtime());
+                        if (!wasMoving || speed == 0) {
+                            mLocHandler.removeCallbacks(mTick);
+                            mTick.run();
+                        }
+                    } catch (RuntimeException e) {
+                        fail(e);
+                    }
+                });
             }
 
             @Override
-            public void onPositionInfo(double lng, double lat, double alt) {
-                mCurLng = lng;
-                mCurLat = lat;
-                mCurAlt = alt;
+            public void onStepInfo(double distanceMeters, double bearing) {
+                mLocHandler.post(() -> {
+                    if (isStop || mSnapshot.status != Status.RUNNING) {
+                        return;
+                    }
+                    try {
+                        mEngine.step(distanceMeters, bearing, SystemClock.elapsedRealtime());
+                        mLocHandler.removeCallbacks(mTick);
+                        mTick.run();
+                    } catch (RuntimeException e) {
+                        fail(e);
+                    }
+                });
+            }
+
+            @Override
+            public long onPositionInfo(double longitude, double latitude, double altitude) {
+                long requestId = SystemClock.elapsedRealtimeNanos();
+                setPosition(longitude, latitude, altitude, requestId);
+                return requestId;
             }
         });
         mJoyStick.show();
     }
 
-    private void initGoLocation() {
-        // 创建 HandlerThread 实例，第一个参数是线程的名字
-        mLocHandlerThread = new HandlerThread(SERVICE_GO_HANDLER_NAME, Process.THREAD_PRIORITY_FOREGROUND);
-        // 启动 HandlerThread 线程
-        mLocHandlerThread.start();
-        // Handler 对象与 HandlerThread 的 Looper 对象的绑定
-        mLocHandler = new Handler(mLocHandlerThread.getLooper()) {
-            // 这里的Handler对象可以看作是绑定在HandlerThread子线程中，所以handlerMessage里的操作是在子线程中运行的
+    @SuppressLint("WrongConstant")
+    private void ensureProviders() {
+        synchronized (PROVIDER_LOCK) {
+            if (mProvidersReady) {
+                return;
+            }
+            if (mLocManager == null) {
+                throw new IllegalStateException("Location manager unavailable");
+            }
+            for (String provider : new String[] {LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER}) {
+                boolean gps = LocationManager.GPS_PROVIDER.equals(provider);
+                int power = gps ? Criteria.POWER_HIGH : Criteria.POWER_LOW;
+                int accuracy = gps ? Criteria.ACCURACY_FINE : Criteria.ACCURACY_COARSE;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    power = gps ? ProviderProperties.POWER_USAGE_HIGH : ProviderProperties.POWER_USAGE_LOW;
+                    accuracy = gps ? ProviderProperties.ACCURACY_FINE : ProviderProperties.ACCURACY_COARSE;
+                }
+                mLocManager.addTestProvider(provider, !gps, gps, !gps, !gps, true, true, true, power, accuracy);
+                PROVIDER_OWNERS.put(provider, this);
+                // Track registration before enable, so partial initialization is also cleaned up.
+                mRegisteredProviders.add(provider);
+                mLocManager.setTestProviderEnabled(provider, true);
+            }
+            mProvidersReady = true;
+        }
+    }
+
+    private void inject(MockLocationEngine.Position position) {
+        if (!GoUtils.hasLocationPermission(this) || !GoUtils.isGpsOpened(this)
+                || !Settings.canDrawOverlays(this)) {
+            throw new SecurityException("Location or overlay permission was revoked");
+        }
+        synchronized (PROVIDER_LOCK) {
+            if (isStop) {
+                return;
+            }
+            long wallTime = System.currentTimeMillis();
+            long elapsedNanos = SystemClock.elapsedRealtimeNanos();
+            for (String provider : mRegisteredProviders) {
+                if (PROVIDER_OWNERS.get(provider) != this) {
+                    throw new IllegalStateException("Mock provider ownership changed");
+                }
+                Location location = new Location(provider);
+                location.setLatitude(position.latitude);
+                location.setLongitude(position.longitude);
+                location.setAltitude(position.altitude);
+                location.setBearing((float) position.bearing);
+                location.setSpeed((float) position.speed);
+                location.setAccuracy(LocationManager.GPS_PROVIDER.equals(provider)
+                        ? GPS_ACCURACY_METERS : NETWORK_ACCURACY_METERS);
+                location.setTime(wallTime);
+                location.setElapsedRealtimeNanos(elapsedNanos);
+                mLocManager.setTestProviderLocation(provider, location);
+            }
+        }
+    }
+
+    private void handleInjectionFailure(RuntimeException error) {
+        if (isStop) {
+            return;
+        }
+        if (error instanceof SecurityException || error instanceof IllegalArgumentException
+                || ++mInjectionFailures >= MAX_INJECTION_FAILURES) {
+            fail(error);
+        } else {
+            XLog.w("Location injection failed; retry " + mInjectionFailures, error);
+            mLocHandler.postDelayed(mTick, STATIONARY_INTERVAL_MILLIS);
+        }
+    }
+
+    private void fail(RuntimeException error) {
+        synchronized (mStateLock) {
+            if (isStop) {
+                return;
+            }
+            isStop = true;
+            XLog.e("Location session failed", error);
+            int message = error instanceof SecurityException ? R.string.app_service_permission_error
+                    : error instanceof IllegalArgumentException ? R.string.app_error_input
+                    : R.string.app_service_injection_error;
+            publish(Status.FAILED, mSnapshot.position, message);
+            mMainHandler.post(this::stopSelf);
+        }
+    }
+
+    private void publish(Status status, MockLocationEngine.Position position, int errorMessage) {
+        Snapshot previous;
+        Snapshot snapshot;
+        synchronized (mStateLock) {
+            if (isStop && status == Status.RUNNING) {
+                return;
+            }
+            previous = mSnapshot;
+            snapshot = new Snapshot(status, position, mRequestedId, errorMessage);
+            mSnapshot = snapshot;
+        }
+        long now = SystemClock.elapsedRealtime();
+        if (status == Status.RUNNING && previous.status == status
+                && previous.requestId == snapshot.requestId && now - mLastUiUpdate < 250) {
+            return;
+        }
+        mLastUiUpdate = now;
+        mMainHandler.post(() -> {
+            // Render the latest complete snapshot even if a newer tick was throttled.
+            Snapshot delivered = status == Status.RUNNING ? mSnapshot : snapshot;
+            if (status == Status.RUNNING && (isStop || delivered.status != Status.RUNNING)) {
+                return;
+            }
+            MockLocationEngine.Position shownPosition = delivered.position;
+            if (mJoyStick != null && shownPosition != null && !isStop) {
+                if (delivered.requestId != mLastDeliveredRequestId) {
+                    mJoyStick.stopMovement();
+                    mJoyStick.setCurrentPosition(shownPosition.longitude, shownPosition.latitude, shownPosition.altitude);
+                    mJoyStick.acknowledgePosition(delivered.requestId);
+                    mLastDeliveredRequestId = delivered.requestId;
+                }
+                mJoyStick.updateCurrentPosition(shownPosition.longitude, shownPosition.latitude,
+                        shownPosition.altitude, shownPosition.bearing, GPS_ACCURACY_METERS);
+            }
+            if (mListener != null) {
+                mListener.onStateChanged(delivered);
+                if (status == Status.FAILED) {
+                    mFailureReported = true;
+                }
+            } else if (status == Status.FAILED && !mFailureReported) {
+                GoUtils.DisplayToast(this, getString(delivered.errorMessage));
+                mFailureReported = true;
+            }
+        });
+    }
+
+    private void initNotification() {
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(ACTION_SHOW);
+        filter.addAction(ACTION_HIDE);
+        filter.addAction(ACTION_STOP);
+        BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
-            public void handleMessage(@NonNull Message msg) {
-                try {
-                    Thread.sleep(100);
-
-                    if (!isStop) {
-                        setLocationNetwork();
-                        setLocationGPS();
-
-                        sendEmptyMessage(HANDLER_MSG_ID);
+            public void onReceive(Context context, Intent intent) {
+                if (ACTION_STOP.equals(intent.getAction())) {
+                    stopSelf();
+                } else if (mJoyStick != null) {
+                    if (ACTION_SHOW.equals(intent.getAction())) {
+                        try {
+                            mJoyStick.show();
+                        } catch (RuntimeException e) {
+                            fail(e);
+                        }
+                    } else if (ACTION_HIDE.equals(intent.getAction())) {
+                        mJoyStick.hide();
                     }
-                } catch (InterruptedException e) {
-                    XLog.e("SERVICEGO: ERROR - handleMessage");
-                    Thread.currentThread().interrupt();
                 }
             }
         };
-
-        mLocHandler.sendEmptyMessage(HANDLER_MSG_ID);
-    }
-
-    private void removeTestProviderGPS() {
-        try {
-            if (mLocManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                mLocManager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, false);
-                mLocManager.removeTestProvider(LocationManager.GPS_PROVIDER);
-            }
-        } catch (Exception e) {
-            XLog.e("SERVICEGO: ERROR - removeTestProviderGPS");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(receiver, filter, RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(receiver, filter);
+        }
+        mActionReceiver = receiver;
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (manager == null) {
+            throw new IllegalStateException("Notification manager unavailable");
+        }
+        manager.createNotificationChannel(new NotificationChannel(CHANNEL_ID,
+                getString(R.string.app_name), NotificationManager.IMPORTANCE_LOW));
+        PendingIntent content = PendingIntent.getActivity(this, 1,
+                new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle(getString(R.string.app_name))
+                .setContentText(getString(R.string.app_service_tips))
+                .setContentIntent(content)
+                .setOngoing(true)
+                .addAction(0, getString(R.string.note_show), notificationAction(ACTION_SHOW))
+                .addAction(0, getString(R.string.note_hide), notificationAction(ACTION_HIDE))
+                .addAction(0, getString(R.string.note_stop), notificationAction(ACTION_STOP))
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .build();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTE_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
+        } else {
+            startForeground(NOTE_ID, notification);
         }
     }
 
-    // 注意下面临时添加 @SuppressLint("wrongconstant") 以处理 addTestProvider 参数值的 lint 错误
-    @SuppressLint("wrongconstant")
-    private void addTestProviderGPS() {
-        try {
-            // 注意，由于 android api 问题，下面的参数会提示错误(以下参数是通过相关API获取的真实GPS参数，不是随便写的)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                mLocManager.addTestProvider(LocationManager.GPS_PROVIDER, false, true, false,
-                        false, true, true, true, ProviderProperties.POWER_USAGE_HIGH, ProviderProperties.ACCURACY_FINE);
-            } else {
-                mLocManager.addTestProvider(LocationManager.GPS_PROVIDER, false, true, false,
-                        false, true, true, true, Criteria.POWER_HIGH, Criteria.ACCURACY_FINE);
-            }
-            if (!mLocManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                mLocManager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, true);
-            }
-        } catch (Exception e) {
-            XLog.e("SERVICEGO: ERROR - addTestProviderGPS");
-        }
+    private PendingIntent notificationAction(String action) {
+        return PendingIntent.getBroadcast(this, 0, new Intent(action).setPackage(getPackageName()),
+                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
-    private void setLocationGPS() {
-        try {
-            // 尽可能模拟真实的 GPS 数据
-            Location loc = new Location(LocationManager.GPS_PROVIDER);
-            loc.setAccuracy(Criteria.ACCURACY_FINE);    // 设定此位置的估计水平精度，以米为单位。
-            loc.setAltitude(mCurAlt);                     // 设置高度，在 WGS 84 参考坐标系中的米
-            loc.setBearing(mCurBea);                       // 方向（度）
-            loc.setLatitude(mCurLat);                   // 纬度（度）
-            loc.setLongitude(mCurLng);                  // 经度（度）
-            loc.setTime(System.currentTimeMillis());    // 本地时间
-            loc.setSpeed((float) mSpeed);
-            loc.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
-            Bundle bundle = new Bundle();
-            bundle.putInt("satellites", 7);
-            loc.setExtras(bundle);
-
-            mLocManager.setTestProviderLocation(LocationManager.GPS_PROVIDER, loc);
-        } catch (Exception e) {
-            XLog.e("SERVICEGO: ERROR - setLocationGPS");
-        }
-    }
-
-    private void removeTestProviderNetwork() {
-        try {
-            if (mLocManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                mLocManager.setTestProviderEnabled(LocationManager.NETWORK_PROVIDER, false);
-                mLocManager.removeTestProvider(LocationManager.NETWORK_PROVIDER);
+    @Override
+    public void onDestroy() {
+        synchronized (mStateLock) {
+            isStop = true;
+            if (mSnapshot.status != Status.FAILED) {
+                mSnapshot = new Snapshot(Status.STOPPED, mSnapshot.position, mSnapshot.requestId, 0);
             }
-        } catch (Exception e) {
-            XLog.e("SERVICEGO: ERROR - removeTestProviderNetwork");
         }
-    }
-
-    // 注意下面临时添加 @SuppressLint("wrongconstant") 以处理 addTestProvider 参数值的 lint 错误
-    @SuppressLint("wrongconstant")
-    private void addTestProviderNetwork() {
-        try {
-            // 注意，由于 android api 问题，下面的参数会提示错误(以下参数是通过相关API获取的真实NETWORK参数，不是随便写的)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                mLocManager.addTestProvider(LocationManager.NETWORK_PROVIDER, true, false,
-                        true, true, true, true,
-                        true, ProviderProperties.POWER_USAGE_LOW, ProviderProperties.ACCURACY_COARSE);
-            } else {
-                mLocManager.addTestProvider(LocationManager.NETWORK_PROVIDER, true, false,
-                        true, true, true, true,
-                        true, Criteria.POWER_LOW, Criteria.ACCURACY_COARSE);
+        if (sActiveService == this) {
+            sActiveService = null;
+        }
+        mMainHandler.removeCallbacksAndMessages(null);
+        if (mListener != null) {
+            mListener.onStateChanged(mSnapshot);
+            if (mSnapshot.status == Status.FAILED) {
+                mFailureReported = true;
             }
-            if (!mLocManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                mLocManager.setTestProviderEnabled(LocationManager.NETWORK_PROVIDER, true);
-            }
-        } catch (SecurityException e) {
-            XLog.e("SERVICEGO: ERROR - addTestProviderNetwork");
+            mListener = null;
+        } else if (mSnapshot.status == Status.FAILED && !mFailureReported) {
+            GoUtils.DisplayToast(this, getString(mSnapshot.errorMessage));
         }
-    }
-
-    private void setLocationNetwork() {
-        try {
-            // 尽可能模拟真实的 NETWORK 数据
-            Location loc = new Location(LocationManager.NETWORK_PROVIDER);
-            loc.setAccuracy(Criteria.ACCURACY_COARSE);  // 设定此位置的估计水平精度，以米为单位。
-            loc.setAltitude(mCurAlt);                     // 设置高度，在 WGS 84 参考坐标系中的米
-            loc.setBearing(mCurBea);                       // 方向（度）
-            loc.setLatitude(mCurLat);                   // 纬度（度）
-            loc.setLongitude(mCurLng);                  // 经度（度）
-            loc.setTime(System.currentTimeMillis());    // 本地时间
-            loc.setSpeed((float) mSpeed);
-            loc.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
-
-            mLocManager.setTestProviderLocation(LocationManager.NETWORK_PROVIDER, loc);
-        } catch (Exception e) {
-            XLog.e("SERVICEGO: ERROR - setLocationNetwork");
-        }
-    }
-
-    public class NoteActionReceiver extends BroadcastReceiver {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            String action = intent.getAction();
-            if (action != null) {
-                if (action.equals(SERVICE_GO_NOTE_ACTION_JOYSTICK_SHOW)) {
-                    mJoyStick.show();
+        // Finish any in-flight tick before cleanup; providers are owned by this queue.
+        mLocHandler.removeCallbacksAndMessages(null);
+        mLocHandler.post(() -> {
+            synchronized (PROVIDER_LOCK) {
+                for (String provider : mRegisteredProviders) {
+                    if (PROVIDER_OWNERS.get(provider) != this) {
+                        continue;
+                    }
+                    try {
+                        mLocManager.removeTestProvider(provider);
+                    } catch (RuntimeException e) {
+                        XLog.e("Failed to remove mock provider: " + provider, e);
+                    } finally {
+                        PROVIDER_OWNERS.remove(provider);
+                    }
                 }
-
-                if (action.equals(SERVICE_GO_NOTE_ACTION_JOYSTICK_HIDE)) {
-                    mJoyStick.hide();
-                }
+                mRegisteredProviders.clear();
             }
+        });
+        mLocThread.quitSafely();
+        if (mJoyStick != null) {
+            mJoyStick.destroy();
         }
+        if (mActionReceiver != null) {
+            unregisterReceiver(mActionReceiver);
+        }
+        stopForeground(STOP_FOREGROUND_REMOVE);
+        super.onDestroy();
     }
 
     public class ServiceGoBinder extends Binder {
-        public void setPosition(double lng, double lat, double alt) {
-            mLocHandler.removeMessages(HANDLER_MSG_ID);
-            mCurLng = lng;
-            mCurLat = lat;
-            mCurAlt = alt;
-            mLocHandler.sendEmptyMessage(HANDLER_MSG_ID);
-            mJoyStick.setCurrentPosition(mCurLng, mCurLat, mCurAlt);
+        public Snapshot getSnapshot() {
+            return mSnapshot;
+        }
+
+        public void setListener(Listener listener) {
+            mListener = listener;
+            if (listener != null) {
+                listener.onStateChanged(mSnapshot);
+            }
+        }
+
+        public void clearListener(Listener listener) {
+            if (mListener == listener) {
+                mListener = null;
+            }
+        }
+
+        public void setPosition(double longitude, double latitude, double altitude, long requestId) {
+            ServiceGo.this.setPosition(longitude, latitude, altitude, requestId);
         }
     }
 }

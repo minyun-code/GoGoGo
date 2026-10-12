@@ -37,6 +37,13 @@
     <string name="app_error_permission">权限不足，请授予相关权限</string>
     <string name="app_service_starting">定位服务正在启动，请稍后重试</string>
     <string name="app_service_start_error">定位服务启动失败，请检查相关权限</string>
+    <string name="app_service_permission_error">定位服务已停止，请检查定位、模拟位置和悬浮窗权限</string>
+    <string name="app_service_injection_error">位置注入失败，定位服务已停止</string>
+    <string name="app_service_started">模拟位置已启动</string>
+    <string name="app_service_stopped">模拟位置已终止</string>
+    <string name="app_location_unavailable">尚未获得有效位置，可手动输入坐标或选择历史位置</string>
+    <string name="app_location_failed">获取当前位置失败（%1$d），已保留最近有效位置</string>
+    <string name="app_location_key_error">定位密钥不可用，请检查地图密钥配置</string>
     <string name="app_error_input">输入有误，请检查输入是否合法</string>
     <string name="app_error_input_null">输入不能为空，请重新输入内容</string>
     <string name="app_error_search">查找失败，请检查网络或定位</string>
@@ -54,6 +61,7 @@
     <string name="search_favorite_ok">已收藏到历史记录</string>
     <string name="search_favorite_error">收藏失败，请稍后重试</string>
     <string name="app_location_ok">位置已传送</string>
+    <string name="app_location_updating">位置正在更新，请稍后</string>
     <string name="app_location_copy">位置已复制到剪切板</string>
     <string name="app_location_save">位置已保存</string>
 
@@ -103,6 +111,7 @@
     <!-- 通知栏 -->
     <string name="note_show">显示摇杆</string>
     <string name="note_hide">隐藏摇杆</string>
+    <string name="note_stop">停止定位</string>
     <!-- 摇杆 -->
     <string name="joystick_map_tips">搜索或点击地图位置</string>
     <string name="joystick_history_tips">搜索或点击历史位置</string>

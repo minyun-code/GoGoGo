@@ -114,7 +114,17 @@ public class DataBaseHistoryLocation extends SQLiteOpenHelper {
     public static boolean saveLocation(SQLiteDatabase sqLiteDatabase, String location,
                                        double longitudeBd09, double latitudeBd09,
                                        boolean favorite) {
-        double[] wgs84 = MapUtils.bd2wgs(longitudeBd09, latitudeBd09);
+        return saveLocation(sqLiteDatabase, location, longitudeBd09, latitudeBd09, favorite,
+                MapUtils.bd2wgs(longitudeBd09, latitudeBd09));
+    }
+
+    public static boolean saveLocation(SQLiteDatabase sqLiteDatabase, String location,
+                                       double longitudeBd09, double latitudeBd09,
+                                       boolean favorite, double[] wgs84) {
+        if (!MapUtils.isValidCoordinate(longitudeBd09, latitudeBd09) || wgs84 == null
+                || wgs84.length != 2 || !MapUtils.isValidCoordinate(wgs84[0], wgs84[1])) {
+            return false;
+        }
         ContentValues contentValues = new ContentValues();
         contentValues.put(DB_COLUMN_LOCATION, location);
         contentValues.put(DB_COLUMN_LONGITUDE_WGS84, String.valueOf(wgs84[0]));

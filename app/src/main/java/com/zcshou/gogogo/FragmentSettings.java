@@ -11,6 +11,7 @@ import androidx.preference.PreferenceFragmentCompat;
 import com.zcshou.utils.GoUtils;
 import com.zcshou.utils.InputUtils;
 import com.zcshou.utils.AppSettings;
+import com.zcshou.utils.MockLocationEngine;
 
 import java.util.Objects;
 
@@ -32,6 +33,9 @@ public class FragmentSettings extends PreferenceFragmentCompat {
                 try {
                     double value = InputUtils.parseFiniteDouble(newValue.toString());
                     if ((!"setting_altitude".equals(pref.getKey()) && value < 0)
+                            || (("setting_walk".equals(pref.getKey()) || "setting_run".equals(pref.getKey())
+                            || "setting_bike".equals(pref.getKey()))
+                            && value > MockLocationEngine.MAX_SPEED_METERS_PER_SECOND)
                             || (AppSettings.HISTORY_EXPIRATION.equals(pref.getKey())
                             && value > Long.MAX_VALUE / 86400.0)) {
                         throw new NumberFormatException("Setting out of range");

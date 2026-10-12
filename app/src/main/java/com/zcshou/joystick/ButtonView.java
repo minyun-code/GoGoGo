@@ -55,6 +55,18 @@ public class ButtonView extends LinearLayout {
         initButtonView();
     }
 
+    public void resetDirection() {
+        isNorth = isSouth = isWest = isEast = false;
+        isEastNorth = isEastSouth = isWestNorth = isWestSouth = false;
+        for (ImageButton button : new ImageButton[] {btnNorth, btnSouth, btnWest, btnEast,
+                btnEastNorth, btnEastSouth, btnWestNorth, btnWestSouth}) {
+            button.setColorFilter(getResources().getColor(R.color.black, mContext.getTheme()));
+        }
+        if (mListener != null) {
+            mListener.clickAngleInfo(false, 0, 0);
+        }
+    }
+
     private void initButtonView() {
         btnCenter = findViewById(R.id.btn_center);
         btnCenter.setOnClickListener(view -> {

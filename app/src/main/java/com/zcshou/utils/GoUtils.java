@@ -1,14 +1,13 @@
 package com.zcshou.utils;
 
-import android.annotation.SuppressLint;
+import android.Manifest;
+import android.app.AppOpsManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
-import android.location.Criteria;
 import android.location.LocationManager;
-import android.location.provider.ProviderProperties;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -26,7 +25,6 @@ import com.elvishew.xlog.XLog;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.List;
 import java.util.Locale;
 
 public class GoUtils {
@@ -82,51 +80,33 @@ public class GoUtils {
         return ((isWifiConnected(context) || isMobileConnected(context)) && isNetworkConnected(context));
     }
 
-    //判断GPS是否打开
-    public static  boolean isGpsOpened(Context context) {
-        LocationManager locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
-        return locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+    public static boolean hasLocationPermission(Context context) {
+        return context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                || context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
     }
 
-    // 判断是否已在开发者选项中开启模拟位置权限（注意下面临时添加 @SuppressLint("wrongconstant") 以处理 addTestProvider 参数值的 lint 错误）
-    @SuppressLint("wrongconstant")
-    public static boolean isAllowMockLocation(Context context) {
-        boolean canMockPosition = false;
-        int index;
-
-        try {
-            LocationManager locationManager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);//获得LocationManager引用
-
-            List<String> list = locationManager.getAllProviders();
-            for (index = 0; index < list.size(); index++) {
-                if (list.get(index).equals(LocationManager.GPS_PROVIDER)) {
-                    break;
-                }
-            }
-
-            if (index < list.size()) {
-                // 注意，由于 android api 问题，下面的参数会提示错误(以下参数是通过相关API获取的真实GPS参数，不是随便写的)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    locationManager.addTestProvider(LocationManager.GPS_PROVIDER, false, true, false,
-                            false, true, true, true, ProviderProperties.POWER_USAGE_HIGH, ProviderProperties.ACCURACY_FINE);
-                } else {
-                    locationManager.addTestProvider(LocationManager.GPS_PROVIDER, false, true, false,
-                            false, true, true, true, Criteria.POWER_HIGH, Criteria.ACCURACY_FINE);
-                }
-                canMockPosition = true;
-            }
-
-            // 模拟位置可用
-            if (canMockPosition) {
-                // remove test provider
-                locationManager.setTestProviderEnabled(LocationManager.GPS_PROVIDER, false);
-                locationManager.removeTestProvider(LocationManager.GPS_PROVIDER);
-            }
-        } catch (SecurityException e) {
-            XLog.e("Operation failed", e);
+    public static boolean isGpsOpened(Context context) {
+        LocationManager manager = (LocationManager) context.getSystemService(Context.LOCATION_SERVICE);
+        if (manager == null) {
+            return false;
         }
+        boolean locationEnabled = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                ? manager.isLocationEnabled()
+                : Settings.Secure.getInt(context.getContentResolver(), Settings.Secure.LOCATION_MODE,
+                        Settings.Secure.LOCATION_MODE_OFF) != Settings.Secure.LOCATION_MODE_OFF;
+        return locationEnabled && manager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+    }
 
-        return canMockPosition;
+    // Permission checks must never replace a real location provider.
+    public static boolean isAllowMockLocation(Context context) {
+        AppOpsManager appOps = (AppOpsManager) context.getSystemService(Context.APP_OPS_SERVICE);
+        try {
+            return appOps != null && appOps.checkOpNoThrow(AppOpsManager.OPSTR_MOCK_LOCATION,
+                    android.os.Process.myUid(), context.getPackageName()) == AppOpsManager.MODE_ALLOWED;
+        } catch (SecurityException e) {
+            XLog.e("Cannot check mock location permission", e);
+            return false;
+        }
     }
 
     /**
