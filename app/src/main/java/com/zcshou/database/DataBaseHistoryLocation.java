@@ -5,6 +5,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.database.sqlite.SQLiteException;
 
 import com.elvishew.xlog.XLog;
 import com.zcshou.utils.MapUtils;
@@ -19,14 +20,19 @@ public class DataBaseHistoryLocation extends SQLiteOpenHelper {
     public static final String DB_COLUMN_LONGITUDE_CUSTOM = "DB_COLUMN_LONGITUDE_CUSTOM";
     public static final String DB_COLUMN_LATITUDE_CUSTOM = "DB_COLUMN_LATITUDE_CUSTOM";
     public static final String DB_COLUMN_FAVORITE = "DB_COLUMN_FAVORITE";
+    public static final String DB_COLUMN_NAME_CUSTOMIZED = "DB_COLUMN_NAME_CUSTOMIZED";
 
-    private static final int DB_VERSION = 2;
+    private static final int DB_VERSION = 3;
     private static final String DB_NAME = "HistoryLocation.db";
     private static final String CREATE_TABLE = "create table if not exists " + TABLE_NAME +
             " (DB_COLUMN_ID INTEGER PRIMARY KEY AUTOINCREMENT, DB_COLUMN_LOCATION TEXT, " +
             "DB_COLUMN_LONGITUDE_WGS84 TEXT NOT NULL, DB_COLUMN_LATITUDE_WGS84 TEXT NOT NULL, " +
             "DB_COLUMN_TIMESTAMP BIGINT NOT NULL, DB_COLUMN_LONGITUDE_CUSTOM TEXT NOT NULL, " +
-            "DB_COLUMN_LATITUDE_CUSTOM TEXT NOT NULL, DB_COLUMN_FAVORITE INTEGER NOT NULL DEFAULT 0)";
+            "DB_COLUMN_LATITUDE_CUSTOM TEXT NOT NULL, DB_COLUMN_FAVORITE INTEGER NOT NULL DEFAULT 0, " +
+            "DB_COLUMN_NAME_CUSTOMIZED INTEGER NOT NULL DEFAULT 0)";
+    private static final String CREATE_UNIQUE_INDEX = "CREATE UNIQUE INDEX IF NOT EXISTS " +
+            "HistoryLocation_coordinates ON " + TABLE_NAME + " (" +
+            DB_COLUMN_LONGITUDE_WGS84 + ", " + DB_COLUMN_LATITUDE_WGS84 + ")";
             
     public DataBaseHistoryLocation(Context context) {
         super(context, DB_NAME, null, DB_VERSION);
@@ -35,6 +41,7 @@ public class DataBaseHistoryLocation extends SQLiteOpenHelper {
     @Override
     public void onCreate(SQLiteDatabase sqLiteDatabase) {
         sqLiteDatabase.execSQL(CREATE_TABLE);
+        sqLiteDatabase.execSQL(CREATE_UNIQUE_INDEX);
     }
     
     @Override
@@ -43,26 +50,60 @@ public class DataBaseHistoryLocation extends SQLiteOpenHelper {
             sqLiteDatabase.execSQL("ALTER TABLE " + TABLE_NAME + " ADD COLUMN "
                     + DB_COLUMN_FAVORITE + " INTEGER NOT NULL DEFAULT 0");
         }
+        if (oldVersion < 3) {
+            sqLiteDatabase.execSQL("ALTER TABLE " + TABLE_NAME + " ADD COLUMN "
+                    + DB_COLUMN_NAME_CUSTOMIZED + " INTEGER NOT NULL DEFAULT 0");
+            // Old versions did not distinguish user labels from resolved addresses; preserve both.
+            sqLiteDatabase.execSQL("UPDATE " + TABLE_NAME + " SET " + DB_COLUMN_NAME_CUSTOMIZED
+                    + " = 1 WHERE " + DB_COLUMN_LOCATION + " IS NOT NULL AND " + DB_COLUMN_LOCATION + " <> ''");
+            sqLiteDatabase.execSQL("DELETE FROM " + TABLE_NAME + " WHERE " + DB_COLUMN_ID
+                    + " <> (SELECT kept." + DB_COLUMN_ID + " FROM " + TABLE_NAME + " AS kept WHERE kept."
+                    + DB_COLUMN_LONGITUDE_WGS84 + " = " + TABLE_NAME + "." + DB_COLUMN_LONGITUDE_WGS84
+                    + " AND kept." + DB_COLUMN_LATITUDE_WGS84 + " = " + TABLE_NAME + "." + DB_COLUMN_LATITUDE_WGS84
+                    + " ORDER BY kept." + DB_COLUMN_FAVORITE + " DESC, kept." + DB_COLUMN_TIMESTAMP
+                    + " DESC, kept." + DB_COLUMN_ID + " DESC LIMIT 1)");
+            sqLiteDatabase.execSQL(CREATE_UNIQUE_INDEX);
+        }
     }
 
     // 保存选择的位置
     public static boolean saveHistoryLocation(SQLiteDatabase sqLiteDatabase, ContentValues contentValues) {
         try {
-            // 先删除原来的记录，再插入新记录
-            String longitudeWgs84 = contentValues.getAsString(DB_COLUMN_LONGITUDE_WGS84);
-            String latitudeWgs84 = contentValues.getAsString(DB_COLUMN_LATITUDE_WGS84);
-            Integer favorite = contentValues.getAsInteger(DB_COLUMN_FAVORITE);
-            if ((favorite == null || favorite == 0)
-                    && isFavorite(sqLiteDatabase, longitudeWgs84, latitudeWgs84)) {
-                contentValues.put(DB_COLUMN_FAVORITE, 1);
+            sqLiteDatabase.beginTransaction();
+            try {
+                ContentValues values = new ContentValues(contentValues);
+                values.remove(DB_COLUMN_ID);
+                String selection = DB_COLUMN_LONGITUDE_WGS84 + " = ? AND " + DB_COLUMN_LATITUDE_WGS84 + " = ?";
+                String[] coordinates = {values.getAsString(DB_COLUMN_LONGITUDE_WGS84),
+                        values.getAsString(DB_COLUMN_LATITUDE_WGS84)};
+                try (Cursor cursor = sqLiteDatabase.query(TABLE_NAME,
+                        new String[] {DB_COLUMN_ID, DB_COLUMN_LOCATION, DB_COLUMN_FAVORITE, DB_COLUMN_NAME_CUSTOMIZED},
+                        selection, coordinates, null, null, null, "1")) {
+                    if (cursor.moveToFirst()) {
+                        boolean favorite = cursor.getInt(2) == 1;
+                        boolean customized = cursor.getInt(3) == 1;
+                        if (favorite) {
+                            values.put(DB_COLUMN_FAVORITE, 1);
+                        }
+                        if ((favorite || customized) && cursor.getString(1) != null) {
+                            values.put(DB_COLUMN_LOCATION, cursor.getString(1));
+                        }
+                        values.put(DB_COLUMN_NAME_CUSTOMIZED, customized ? 1 : 0);
+                        if (sqLiteDatabase.update(TABLE_NAME, values, DB_COLUMN_ID + " = ?",
+                                new String[] {cursor.getString(0)}) != 1) {
+                            throw new SQLiteException("History record was not updated");
+                        }
+                    } else {
+                        sqLiteDatabase.insertOrThrow(TABLE_NAME, null, values);
+                    }
+                }
+                sqLiteDatabase.setTransactionSuccessful();
+                return true;
+            } finally {
+                sqLiteDatabase.endTransaction();
             }
-            sqLiteDatabase.delete(TABLE_NAME,
-                            DB_COLUMN_LONGITUDE_WGS84 + " = ? AND " +
-                            DB_COLUMN_LATITUDE_WGS84 + " = ?",
-                    new String[] {longitudeWgs84, latitudeWgs84});
-            return sqLiteDatabase.insert(TABLE_NAME, null, contentValues) != -1;
         } catch (Exception e) {
-            XLog.e("DATABASE: insert error");
+            XLog.e("DATABASE: save location error", e);
             return false;
         }
     }
@@ -85,16 +126,14 @@ public class DataBaseHistoryLocation extends SQLiteOpenHelper {
         return saveHistoryLocation(sqLiteDatabase, contentValues);
     }
 
-    private static boolean isFavorite(SQLiteDatabase sqLiteDatabase,
-                                      String longitudeWgs84, String latitudeWgs84) {
-        try (Cursor cursor = sqLiteDatabase.query(
-                TABLE_NAME,
-                new String[] {DB_COLUMN_FAVORITE},
-                DB_COLUMN_LONGITUDE_WGS84 + " = ? AND " + DB_COLUMN_LATITUDE_WGS84 + " = ?",
-                new String[] {longitudeWgs84, latitudeWgs84},
-                null, null, null, "1")) {
-            return cursor.moveToFirst() && cursor.getInt(0) == 1;
-        }
+    // Resolve an address only while the record still has an automatically generated name.
+    public static void updateResolvedAddress(SQLiteDatabase database, String longitude, String latitude, String address) {
+        ContentValues values = new ContentValues();
+        values.put(DB_COLUMN_LOCATION, address);
+        database.update(TABLE_NAME, values,
+                DB_COLUMN_LONGITUDE_WGS84 + " = ? AND " + DB_COLUMN_LATITUDE_WGS84 + " = ? AND "
+                        + DB_COLUMN_FAVORITE + " = 0 AND " + DB_COLUMN_NAME_CUSTOMIZED + " = 0",
+                new String[] {longitude, latitude});
     }
 
     // 修改历史记录名称
@@ -102,6 +141,7 @@ public class DataBaseHistoryLocation extends SQLiteOpenHelper {
         try{
             ContentValues contentValues = new ContentValues();
             contentValues.put(DB_COLUMN_LOCATION, location);
+            contentValues.put(DB_COLUMN_NAME_CUSTOMIZED, 1);
             sqLiteDatabase.update(TABLE_NAME, contentValues, DB_COLUMN_ID + " = ?", new String[]{locID});
         } catch (Exception e){
             XLog.e("DATABASE: update error");

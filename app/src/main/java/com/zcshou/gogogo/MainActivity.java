@@ -41,6 +41,8 @@ import android.widget.SimpleAdapter;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.ActionBarDrawerToggle;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.widget.SearchView;
@@ -97,6 +99,8 @@ import com.zcshou.utils.ShareUtils;
 import com.zcshou.utils.GoUtils;
 import com.zcshou.utils.MapUtils;
 import com.zcshou.utils.MapSearchUtils;
+import com.zcshou.utils.InputUtils;
+import com.zcshou.utils.VersionUtils;
 
 import com.elvishew.xlog.XLog;
 
@@ -144,6 +148,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
     private float mCurrentDirection = 0.0f;
     private boolean isFirstLoc = true; // 是否首次定位
     private boolean isMockServStart = false;
+    private boolean isServiceBound;
     private ServiceGo.ServiceGoBinder mServiceBinder;
     private ServiceConnection mConnection;
     private FloatingActionButton mButtonStart;
@@ -160,9 +165,23 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
     private SuggestionSearch mSuggestionSearch;
     /*============================== 更新 相关 ==============================*/
     private DownloadManager mDownloadManager = null;
-    private long mDownloadId;
+    private static final String UPDATE_DOWNLOAD_ID = "update_download_id";
+    private static final String UPDATE_DOWNLOAD_FILENAME = "update_download_filename";
+    private long mDownloadId = -1;
     private BroadcastReceiver mDownloadBdRcv;
     private String mUpdateFilename;
+    private boolean mUpdateCheckInFlight;
+    private android.app.AlertDialog mUpdateDialog;
+    private boolean mInstallPermissionPending;
+    private final ActivityResultLauncher<Intent> mInstallPermissionLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(), result -> {
+                mInstallPermissionPending = false;
+                if (getPackageManager().canRequestPackageInstalls()) {
+                    installNewVersion();
+                } else {
+                    GoUtils.DisplayToast(this, getString(R.string.update_install_permission_required));
+                }
+            });
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -201,7 +220,9 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
 
             @Override
             public void onServiceDisconnected(ComponentName name) {
-
+                mServiceBinder = null;
+                isMockServStart = false;
+                mButtonStart.setImageResource(R.drawable.ic_position);
             }
         };
 
@@ -210,8 +231,6 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
         initSearchView();
 
         initUpdateVersion();
-
-        checkUpdateVersion(false);
     }
 
     @Override
@@ -243,17 +262,21 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
     protected void onDestroy() {
         XLog.i("MainActivity: onDestroy");
 
-        if (isMockServStart) {
-            unbindService(mConnection); // 解绑服务，服务要记得解绑，不要造成内存泄漏
-            Intent serviceGoIntent = new Intent(MainActivity.this, ServiceGo.class);
-            stopService(serviceGoIntent);
+        if (isMockServStart || isServiceBound) {
+            stopGoLocation();
         }
         unregisterReceiver(mDownloadBdRcv);
+        mOkHttpClient.dispatcher().cancelAll();
+        if (mUpdateDialog != null) {
+            mUpdateDialog.dismiss();
+        }
 
         mSensorManager.unregisterListener(this);
 
         // 退出时销毁定位
-        mLocClient.stop();
+        if (mLocClient != null) {
+            mLocClient.stop();
+        }
         // 关闭定位图层
         mBaiduMap.setMyLocationEnabled(false);
         mMapView.onDestroy();
@@ -265,8 +288,12 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
         mSuggestionSearch.destroy();
 
         //close db
-        mLocationHistoryDB.close();
-        mSearchHistoryDB.close();
+        if (mLocationHistoryDB != null) {
+            mLocationHistoryDB.close();
+        }
+        if (mSearchHistoryDB != null) {
+            mSearchHistoryDB.close();
+        }
 
         super.onDestroy();
     }
@@ -438,7 +465,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                     }
                 }
             } else if (id == R.id.nav_update) {
-                checkUpdateVersion(true);
+                checkUpdateVersion();
             } else if (id == R.id.nav_feedback) {
                 File file = new File(getExternalFilesDir("Logs"), GoApplication.LOG_FILE_NAME);
                 ShareUtils.shareFile(this, file, item.getTitle().toString());
@@ -718,37 +745,29 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
 
             Button btnGo = view.findViewById(R.id.input_position_ok);
             btnGo.setOnClickListener(v2 -> {
-                String dialog_lng_str = dialog_lng.getText().toString();
-                String dialog_lat_str = dialog_lat.getText().toString();
-
-                if (TextUtils.isEmpty(dialog_lng_str) || TextUtils.isEmpty(dialog_lat_str)) {
-                    GoUtils.DisplayToast(MainActivity.this,getResources().getString(R.string.app_error_input));
-                } else {
-                    double dialog_lng_double = Double.parseDouble(dialog_lng_str);
-                    double dialog_lat_double = Double.parseDouble(dialog_lat_str);
-
-                    if (dialog_lng_double > 180.0 || dialog_lng_double < -180.0) {
-                        GoUtils.DisplayToast(MainActivity.this,  getResources().getString(R.string.app_error_longitude));
-                    } else {
-                        if (dialog_lat_double > 90.0 || dialog_lat_double < -90.0) {
-                            GoUtils.DisplayToast(MainActivity.this,  getResources().getString(R.string.app_error_latitude));
-                        } else {
-                            if (rbBD.isChecked()) {
-                                mMarkLatLngMap = new LatLng(dialog_lat_double, dialog_lng_double);
-                            } else {
-                                double[] bdLonLat = MapUtils.wgs2bd09(dialog_lat_double, dialog_lng_double);
-                                mMarkLatLngMap = new LatLng(bdLonLat[1], bdLonLat[0]);
-                            }
-                            mMarkName = "手动输入的坐标";
-
-                            markMap();
-
-                            MapStatusUpdate mapstatusupdate = MapStatusUpdateFactory.newLatLng(mMarkLatLngMap);
-                            mBaiduMap.setMapStatus(mapstatusupdate);
-
-                            dialog.dismiss();
-                        }
+                try {
+                    double longitude = InputUtils.parseFiniteDouble(dialog_lng.getText().toString());
+                    double latitude = InputUtils.parseFiniteDouble(dialog_lat.getText().toString());
+                    if (longitude < -180 || longitude > 180) {
+                        GoUtils.DisplayToast(this, getString(R.string.app_error_longitude));
+                        return;
                     }
+                    if (latitude < -90 || latitude > 90) {
+                        GoUtils.DisplayToast(this, getString(R.string.app_error_latitude));
+                        return;
+                    }
+                    if (rbBD.isChecked()) {
+                        mMarkLatLngMap = new LatLng(latitude, longitude);
+                    } else {
+                        double[] bdLonLat = MapUtils.wgs2bd09(longitude, latitude);
+                        mMarkLatLngMap = new LatLng(bdLonLat[1], bdLonLat[0]);
+                    }
+                    mMarkName = "手动输入的坐标";
+                    markMap();
+                    mBaiduMap.setMapStatus(MapStatusUpdateFactory.newLatLng(mMarkLatLngMap));
+                    dialog.dismiss();
+                } catch (NumberFormatException e) {
+                    GoUtils.DisplayToast(this, getString(R.string.app_error_input));
                 }
             });
 
@@ -825,29 +844,63 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
         mButtonStart.setOnClickListener(this::doGoLocation);
     }
 
-    private void startGoLocation() {
+    private double getConfiguredAltitude() {
+        try {
+            return InputUtils.parseFiniteDouble(sharedPreferences.getString("setting_altitude", "55.0"));
+        } catch (NumberFormatException e) {
+            return ServiceGo.DEFAULT_ALT;
+        }
+    }
+
+    private boolean startGoLocation() {
+        if (isServiceBound) {
+            stopGoLocation();
+        }
         Intent serviceGoIntent = new Intent(MainActivity.this, ServiceGo.class);
-        bindService(serviceGoIntent, mConnection, BIND_AUTO_CREATE);    // 绑定服务和活动，之后活动就可以去调服务的方法了
         double[] latLng = MapUtils.bd2wgs(mMarkLatLngMap.longitude, mMarkLatLngMap.latitude);
         serviceGoIntent.putExtra(LNG_MSG_ID, latLng[0]);
         serviceGoIntent.putExtra(LAT_MSG_ID, latLng[1]);
-        double alt = Double.parseDouble(sharedPreferences.getString("setting_altitude", "55.0"));
+        double alt = getConfiguredAltitude();
         serviceGoIntent.putExtra(ALT_MSG_ID, alt);
 
-        startForegroundService(serviceGoIntent);
-        XLog.d("startForegroundService: ServiceGo");
-
-        isMockServStart = true;
+        try {
+            startForegroundService(serviceGoIntent);
+            isServiceBound = bindService(serviceGoIntent, mConnection, BIND_AUTO_CREATE);
+            if (!isServiceBound) {
+                stopService(serviceGoIntent);
+                GoUtils.DisplayToast(this, getString(R.string.app_service_start_error));
+                return false;
+            }
+            isMockServStart = true;
+            XLog.d("startForegroundService: ServiceGo");
+            return true;
+        } catch (RuntimeException e) {
+            stopGoLocation();
+            XLog.e("Failed to start location service", e);
+            GoUtils.DisplayToast(this, getString(R.string.app_service_start_error));
+            return false;
+        }
     }
 
     private void stopGoLocation() {
-        unbindService(mConnection); // 解绑服务，服务要记得解绑，不要造成内存泄漏
+        if (isServiceBound) {
+            unbindService(mConnection);
+            isServiceBound = false;
+        }
+        mServiceBinder = null;
         Intent serviceGoIntent = new Intent(MainActivity.this, ServiceGo.class);
         stopService(serviceGoIntent);
         isMockServStart = false;
     }
 
     private void doGoLocation(View v) {
+        // Stopping an active service must remain possible when prerequisites are revoked.
+        if (isMockServStart && mMarkLatLngMap == null) {
+            stopGoLocation();
+            Snackbar.make(v, "模拟位置已终止", Snackbar.LENGTH_LONG).show();
+            mButtonStart.setImageResource(R.drawable.ic_position);
+            return;
+        }
         if (!GoUtils.isNetworkAvailable(this)) {
             GoUtils.DisplayToast(this, getResources().getString(R.string.app_error_network));
             return;
@@ -865,26 +918,23 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
         }
 
         if (isMockServStart) {
-            if (mMarkLatLngMap == null) {
-                stopGoLocation();
-                Snackbar.make(v, "模拟位置已终止", Snackbar.LENGTH_LONG)
-                        .setAction("Action", null).show();
-                mButtonStart.setImageResource(R.drawable.ic_position);
-            } else {
-                double[] latLng = MapUtils.bd2wgs(mMarkLatLngMap.longitude, mMarkLatLngMap.latitude);
-                double alt = Double.parseDouble(sharedPreferences.getString("setting_altitude", "55.0"));
-                mServiceBinder.setPosition(latLng[0], latLng[1], alt);
-                Snackbar.make(v, "已传送到新位置", Snackbar.LENGTH_LONG)
-                        .setAction("Action", null).show();
+            if (mServiceBinder == null) {
+                GoUtils.DisplayToast(this, getString(R.string.app_service_starting));
+                return;
+            }
+            double[] latLng = MapUtils.bd2wgs(mMarkLatLngMap.longitude, mMarkLatLngMap.latitude);
+            double alt = getConfiguredAltitude();
+            mServiceBinder.setPosition(latLng[0], latLng[1], alt);
+            Snackbar.make(v, "已传送到新位置", Snackbar.LENGTH_LONG)
+                    .setAction("Action", null).show();
 
-                recordCurrentLocation(mMarkLatLngMap.longitude, mMarkLatLngMap.latitude);
+            recordCurrentLocation(mMarkLatLngMap.longitude, mMarkLatLngMap.latitude);
 
-                mBaiduMap.clear();
-                mMarkLatLngMap = null;
+            mBaiduMap.clear();
+            mMarkLatLngMap = null;
 
-                if (GoUtils.isWifiEnabled(MainActivity.this)) {
-                    GoUtils.showDisableWifiDialog(MainActivity.this);
-                }
+            if (GoUtils.isWifiEnabled(MainActivity.this)) {
+                GoUtils.showDisableWifiDialog(MainActivity.this);
             }
         } else {
             if (!GoUtils.isAllowMockLocation(this)) {
@@ -895,7 +945,9 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                     Snackbar.make(v, "请先点击地图位置或者搜索位置", Snackbar.LENGTH_LONG)
                             .setAction("Action", null).show();
                 } else {
-                    startGoLocation();
+                    if (!startGoLocation()) {
+                        return;
+                    }
                     mButtonStart.setImageResource(R.drawable.ic_fly);
                     Snackbar.make(v, "模拟位置已启动", Snackbar.LENGTH_LONG)
                             .setAction("Action", null).show();
@@ -955,73 +1007,59 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
 
     // 记录请求的位置信息
     private void recordCurrentLocation(double lng, double lat) {
-        //参数坐标系：bd09
-        final String safeCode = BuildConfig.MAPS_SAFE_CODE;
-        final String ak = sharedPreferences.getString("setting_map_key", BuildConfig.MAPS_API_KEY);
-        double[] latLng = MapUtils.bd2wgs(lng, lat);
-        //bd09坐标的位置信息
-        String mapApiUrl = "https://api.map.baidu.com/reverse_geocoding/v3/?ak=" + ak + "&output=json&coordtype=bd09ll" + "&location=" + lat + "," + lng + "&mcode=" + safeCode;
+        final double[] wgs84 = MapUtils.bd2wgs(lng, lat);
+        final String longitude = String.valueOf(wgs84[0]);
+        final String latitude = String.valueOf(wgs84[1]);
+        final String name = TextUtils.isEmpty(mMarkName)
+                ? getString(R.string.history_location_default_name) : mMarkName;
+        // Save the selection before requesting an address so network failures never lose history.
+        ContentValues values = new ContentValues();
+        values.put(DataBaseHistoryLocation.DB_COLUMN_LOCATION, name);
+        values.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_WGS84, longitude);
+        values.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_WGS84, latitude);
+        values.put(DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP, System.currentTimeMillis() / 1000);
+        values.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, String.valueOf(lng));
+        values.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, String.valueOf(lat));
+        if (!DataBaseHistoryLocation.saveHistoryLocation(mLocationHistoryDB, values)) {
+            return;
+        }
 
-        okhttp3.Request request = new okhttp3.Request.Builder().url(mapApiUrl).get().build();
-        final Call call = mOkHttpClient.newCall(request);
-        call.enqueue(new Callback() {
+        final Context appContext = getApplicationContext();
+        String ak = sharedPreferences.getString("setting_map_key", BuildConfig.MAPS_API_KEY);
+        String url = "https://api.map.baidu.com/reverse_geocoding/v3/?ak=" + ak
+                + "&output=json&coordtype=bd09ll&location=" + lat + "," + lng
+                + "&mcode=" + BuildConfig.MAPS_SAFE_CODE;
+        okhttp3.Request request = new okhttp3.Request.Builder().url(url).get().build();
+        mOkHttpClient.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                //http 请求失败
-                XLog.e("HTTP: HTTP GET FAILED");
-                //插表参数
-                ContentValues contentValues = new ContentValues();
-                contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LOCATION, mMarkName);
-                contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_WGS84, String.valueOf(latLng[0]));
-                contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_WGS84, String.valueOf(latLng[1]));
-                contentValues.put(DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP, System.currentTimeMillis() / 1000);
-                contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, Double.toString(lng));
-                contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, Double.toString(lat));
-
-                DataBaseHistoryLocation.saveHistoryLocation(mLocationHistoryDB, contentValues);
+                if (!call.isCanceled()) {
+                    XLog.e("Failed to resolve history address", e);
+                }
             }
 
             @Override
-            public void onResponse(@NonNull Call call, @NonNull Response response) throws IOException {
-                ResponseBody responseBody = response.body();
-                if (responseBody != null) {
-                    String resp = responseBody.string();
-                    try {
-                        JSONObject getRetJson = new JSONObject(resp);
-
-                        if (Integer.parseInt(getRetJson.getString("status")) == 0) { // 位置获取成功
-                            JSONObject posInfoJson = getRetJson.getJSONObject("result");
-                            String formatted_address = posInfoJson.getString("formatted_address");
-                            ContentValues contentValues = new ContentValues();
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LOCATION, formatted_address);
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_WGS84, String.valueOf(latLng[0]));
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_WGS84, String.valueOf(latLng[1]));
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP, System.currentTimeMillis() / 1000);
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, Double.toString(lng));
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, Double.toString(lat));
-                            DataBaseHistoryLocation.saveHistoryLocation(mLocationHistoryDB, contentValues);
-                        } else {
-                            ContentValues contentValues = new ContentValues();
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LOCATION, mMarkName == null ? getRetJson.getString("message"): mMarkName);
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_WGS84, String.valueOf(latLng[0]));
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_WGS84, String.valueOf(latLng[1]));
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP, System.currentTimeMillis() / 1000);
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, Double.toString(lng));
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, Double.toString(lat));
-                            DataBaseHistoryLocation.saveHistoryLocation(mLocationHistoryDB, contentValues);
-                        }
-                    } catch (JSONException e) {
-                        XLog.e("JSON: resolve json error");
-                        ContentValues contentValues = new ContentValues();
-                        contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LOCATION, mMarkName == null ? getResources().getString(R.string.history_location_default_name) : mMarkName);
-                        contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LOCATION, mMarkName);
-                        contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_WGS84, String.valueOf(latLng[0]));
-                        contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_WGS84, String.valueOf(latLng[1]));
-                        contentValues.put(DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP, System.currentTimeMillis() / 1000);
-                        contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, Double.toString(lng));
-                        contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, Double.toString(lat));
-                        DataBaseHistoryLocation.saveHistoryLocation(mLocationHistoryDB, contentValues);
+            public void onResponse(@NonNull Call call, @NonNull Response response) {
+                try (Response closeableResponse = response) {
+                    ResponseBody body = closeableResponse.body();
+                    if (!closeableResponse.isSuccessful() || body == null) {
+                        return;
                     }
+                    JSONObject result = new JSONObject(body.string());
+                    if (result.optInt("status", -1) != 0) {
+                        return;
+                    }
+                    String address = result.getJSONObject("result").optString("formatted_address");
+                    if (TextUtils.isEmpty(address)) {
+                        return;
+                    }
+                    // Use an independently owned connection; the Activity may already be destroyed.
+                    try (DataBaseHistoryLocation helper = new DataBaseHistoryLocation(appContext)) {
+                        DataBaseHistoryLocation.updateResolvedAddress(
+                                helper.getWritableDatabase(), longitude, latitude, address);
+                    }
+                } catch (IOException | JSONException | RuntimeException e) {
+                    XLog.e("Failed to update history address", e);
                 }
             }
         });
@@ -1216,87 +1254,72 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
 
     /*============================== 更新 相关 ==============================*/
     private void initUpdateVersion() {
-        mDownloadManager =(DownloadManager) MainActivity.this.getSystemService(DOWNLOAD_SERVICE);
-
-        // 用于监听下载完成后，转到安装界面
+        mDownloadManager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+        mDownloadId = sharedPreferences.getLong(UPDATE_DOWNLOAD_ID, -1);
+        mUpdateFilename = sharedPreferences.getString(UPDATE_DOWNLOAD_FILENAME, null);
         mDownloadBdRcv = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                installNewVersion();
+                if (DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())
+                        && mDownloadId > 0
+                        && intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) == mDownloadId) {
+                    installNewVersion();
+                }
             }
         };
         registerReceiver(mDownloadBdRcv, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
     }
 
-    private void checkUpdateVersion(boolean result) {
-        String mapApiUrl = "https://api.github.com/repos/zcshou/gogogo/releases/latest";
-
-        okhttp3.Request request = new okhttp3.Request.Builder().url(mapApiUrl).get().build();
-        final Call call = mOkHttpClient.newCall(request);
-        call.enqueue(new Callback() {
+    // Only the navigation menu invokes this method; app startup does not check or show updates.
+    private void checkUpdateVersion() {
+        if (mUpdateCheckInFlight || (mUpdateDialog != null && mUpdateDialog.isShowing())
+                || isFinishing() || isDestroyed()) {
+            return;
+        }
+        mUpdateCheckInFlight = true;
+        okhttp3.Request request = new okhttp3.Request.Builder()
+                .url("https://api.github.com/repos/zcshou/gogogo/releases/latest").get().build();
+        mOkHttpClient.newCall(request).enqueue(new Callback() {
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                XLog.i("更新检测失败");
+                runOnUiThread(() -> {
+                    mUpdateCheckInFlight = false;
+                    if (!call.isCanceled() && !isFinishing() && !isDestroyed()) {
+                        GoUtils.DisplayToast(MainActivity.this, getString(R.string.update_check_failed));
+                    }
+                });
             }
 
             @Override
-            public void onResponse(@NonNull Call call, @NonNull okhttp3.Response response) throws IOException {
-                ResponseBody responseBody = response.body();
-                if (responseBody != null) {
-                    String resp = responseBody.string();
-                    // 注意，该请求在子线程，不能直接操作界面
+            public void onResponse(@NonNull Call call, @NonNull Response response) {
+                try (Response closeableResponse = response) {
+                    ResponseBody body = closeableResponse.body();
+                    if (!closeableResponse.isSuccessful() || body == null) {
+                        throw new IOException("Invalid update response");
+                    }
+                    JSONObject release = new JSONObject(body.string());
                     runOnUiThread(() -> {
+                        mUpdateCheckInFlight = false;
+                        if (isFinishing() || isDestroyed()) {
+                            return;
+                        }
                         try {
-                            JSONObject getRetJson = new JSONObject(resp);
-                            String curVersion = GoUtils.getVersionName(MainActivity.this);
-
-                            if (curVersion != null
-                                    && (!getRetJson.getString("name").contains(curVersion)
-                                    || !getRetJson.getString("tag_name").contains(curVersion))) {
-                                final android.app.AlertDialog alertDialog = new android.app.AlertDialog.Builder(MainActivity.this).create();
-                                alertDialog.show();
-                                alertDialog.setCancelable(false);
-                                Window window = alertDialog.getWindow();
-                                if (window != null) {
-                                    window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);      // 防止出现闪屏
-                                    window.setContentView(R.layout.update);
-                                    window.setGravity(Gravity.CENTER);
-                                    window.setWindowAnimations(R.style.DialogAnimFadeInFadeOut);
-
-                                    TextView updateTitle = window.findViewById(R.id.update_title);
-                                    updateTitle.setText(getRetJson.getString("name"));
-                                    TextView updateTime = window.findViewById(R.id.update_time);
-                                    updateTime.setText(getRetJson.getString("created_at"));
-                                    TextView updateCommit = window.findViewById(R.id.update_commit);
-                                    updateCommit.setText(getRetJson.getString("target_commitish"));
-
-                                    TextView updateContent = window.findViewById(R.id.update_content);
-                                    final Markwon markwon = Markwon.create(MainActivity.this);
-                                    markwon.setMarkdown(updateContent, getRetJson.getString("body"));
-
-                                    Button updateCancel = window.findViewById(R.id.update_ignore);
-                                    updateCancel.setOnClickListener(v -> alertDialog.cancel());
-
-                                    /* 这里用来保存下载地址 */
-                                    JSONArray jsonArray = new JSONArray(getRetJson.getString("assets"));
-                                    JSONObject jsonObject = jsonArray.getJSONObject(0);
-                                    String download_url = jsonObject.getString("browser_download_url");
-                                    mUpdateFilename = jsonObject.getString("name");
-
-                                    Button updateAgree = window.findViewById(R.id.update_agree);
-                                    updateAgree.setOnClickListener(v -> {
-                                        alertDialog.cancel();
-                                        GoUtils.DisplayToast(MainActivity.this, getResources().getString(R.string.update_downloading));
-                                        downloadNewVersion(download_url);
-                                    });
-                                }
+                            if (VersionUtils.isNewerVersion(release.getString("tag_name"), BuildConfig.VERSION_NAME)) {
+                                showUpdateDialog(release);
                             } else {
-                                if (result) {
-                                    GoUtils.DisplayToast(MainActivity.this, getResources().getString(R.string.update_last));
-                                }
+                                GoUtils.DisplayToast(MainActivity.this, getString(R.string.update_last));
                             }
-                        } catch (JSONException e) {
-                            XLog.e("ERROR: resolve json");
+                        } catch (JSONException | IllegalArgumentException e) {
+                            XLog.e("Invalid release metadata", e);
+                            GoUtils.DisplayToast(MainActivity.this, getString(R.string.update_check_failed));
+                        }
+                    });
+                } catch (IOException | JSONException e) {
+                    XLog.e("Update check failed", e);
+                    runOnUiThread(() -> {
+                        mUpdateCheckInFlight = false;
+                        if (!isFinishing() && !isDestroyed()) {
+                            GoUtils.DisplayToast(MainActivity.this, getString(R.string.update_check_failed));
                         }
                     });
                 }
@@ -1304,46 +1327,169 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
         });
     }
 
-    private void downloadNewVersion(String url) {
-        if (mDownloadManager == null) {
-            return;
-        }
-
-        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
-        request.setAllowedOverRoaming(false);
-        request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-        request.setTitle(GoUtils.getAppName(this));
-        request.setDescription("正在下载新版本...");
-        request.setMimeType("application/vnd.android.package-archive");
-
-        // DownloadManager不会覆盖已有的同名文件，需要自己来删除已存在的文件
-        File file = new File(getExternalFilesDir("Updates"), mUpdateFilename);
-        if (file.exists()) {
-            if(!file.delete()) {
-                return;
+    private JSONObject findUpdateAsset(JSONArray assets) throws JSONException {
+        JSONObject fallback = null;
+        for (int i = 0; i < assets.length(); i++) {
+            JSONObject asset = assets.getJSONObject(i);
+            String name = asset.optString("name").toLowerCase(java.util.Locale.ROOT);
+            if (!name.endsWith(".apk") || name.contains("debug")) {
+                continue;
+            }
+            if (name.contains("arm64-v8a")) {
+                return asset;
+            }
+            if (!name.contains("x86") && !name.contains("armeabi") && fallback == null) {
+                fallback = asset;
             }
         }
-        request.setDestinationUri(Uri.fromFile(file));
+        return fallback;
+    }
 
-        mDownloadId = mDownloadManager.enqueue(request);
+    private void showUpdateDialog(JSONObject release) throws JSONException {
+        JSONObject asset = findUpdateAsset(release.getJSONArray("assets"));
+        if (asset == null) {
+            GoUtils.DisplayToast(this, getString(R.string.update_check_failed));
+            return;
+        }
+        String downloadUrl = asset.getString("browser_download_url");
+        String filename = asset.getString("name");
+        final android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(this).create();
+        mUpdateDialog = dialog;
+        dialog.setOnDismissListener(ignored -> {
+            if (mUpdateDialog == dialog) {
+                mUpdateDialog = null;
+            }
+        });
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window == null) {
+            dialog.dismiss();
+            return;
+        }
+        window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        window.setContentView(R.layout.update);
+        window.setGravity(Gravity.CENTER);
+        window.setWindowAnimations(R.style.DialogAnimFadeInFadeOut);
+
+        ((TextView) window.findViewById(R.id.update_title)).setText(
+                release.optString("name", release.getString("tag_name")));
+        ((TextView) window.findViewById(R.id.update_time)).setText(release.optString("published_at"));
+        ((TextView) window.findViewById(R.id.update_commit)).setText(release.optString("target_commitish"));
+        TextView content = window.findViewById(R.id.update_content);
+        Markwon.create(this).setMarkdown(content, release.optString("body"));
+        window.findViewById(R.id.update_ignore).setOnClickListener(v -> dialog.dismiss());
+        window.findViewById(R.id.update_agree).setOnClickListener(v -> {
+            dialog.dismiss();
+            downloadNewVersion(downloadUrl, filename);
+        });
+    }
+
+    private int getUpdateDownloadStatus() {
+        if (mDownloadManager == null || mDownloadId <= 0) {
+            return -1;
+        }
+        try (Cursor cursor = mDownloadManager.query(new DownloadManager.Query().setFilterById(mDownloadId))) {
+            return cursor != null && cursor.moveToFirst()
+                    ? cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) : -1;
+        } catch (RuntimeException e) {
+            XLog.e("Failed to query update download", e);
+            return -1;
+        }
+    }
+
+    private void downloadNewVersion(String url, String filename) {
+        if (mDownloadManager == null || TextUtils.isEmpty(filename)
+                || !filename.equals(new File(filename).getName()) || filename.contains("\\")
+                || !filename.toLowerCase(java.util.Locale.ROOT).endsWith(".apk")) {
+            GoUtils.DisplayToast(this, getString(R.string.update_download_failed));
+            return;
+        }
+        int status = getUpdateDownloadStatus();
+        if (status == DownloadManager.STATUS_PENDING || status == DownloadManager.STATUS_RUNNING
+                || status == DownloadManager.STATUS_PAUSED) {
+            GoUtils.DisplayToast(this, getString(R.string.update_download_in_progress));
+            return;
+        }
+        File completedDirectory = getExternalFilesDir("Updates");
+        if (status == DownloadManager.STATUS_SUCCESSFUL && filename.equals(mUpdateFilename)
+                && completedDirectory != null && new File(completedDirectory, filename).isFile()
+                && mDownloadManager.getUriForDownloadedFile(mDownloadId) != null) {
+            installNewVersion();
+            return;
+        }
+        try {
+            File directory = getExternalFilesDir("Updates");
+            if (directory == null) {
+                throw new IOException("Update storage unavailable");
+            }
+            File file = new File(directory, filename);
+            if (mDownloadId > 0) {
+                mDownloadManager.remove(mDownloadId);
+                clearUpdateDownload();
+            }
+            if (file.exists() && !file.delete()) {
+                throw new IOException("Cannot replace update file");
+            }
+            DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url))
+                    .setAllowedOverRoaming(false)
+                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                    .setTitle(GoUtils.getAppName(this))
+                    .setDescription(getString(R.string.update_downloading))
+                    .setMimeType("application/vnd.android.package-archive")
+                    .setDestinationUri(Uri.fromFile(file));
+            mDownloadId = mDownloadManager.enqueue(request);
+            mUpdateFilename = filename;
+            sharedPreferences.edit().putLong(UPDATE_DOWNLOAD_ID, mDownloadId)
+                    .putString(UPDATE_DOWNLOAD_FILENAME, filename).apply();
+            GoUtils.DisplayToast(this, getString(R.string.update_downloading));
+        } catch (IOException | RuntimeException e) {
+            XLog.e("Failed to download update", e);
+            GoUtils.DisplayToast(this, getString(R.string.update_download_failed));
+        }
+    }
+
+    private void clearUpdateDownload() {
+        mDownloadId = -1;
+        mUpdateFilename = null;
+        sharedPreferences.edit().remove(UPDATE_DOWNLOAD_ID).remove(UPDATE_DOWNLOAD_FILENAME).apply();
     }
 
     private void installNewVersion() {
-        Intent install = new Intent(Intent.ACTION_VIEW);
-        Uri downloadFileUri = mDownloadManager.getUriForDownloadedFile(mDownloadId);
-        File file = new File(getExternalFilesDir("Updates"), mUpdateFilename);
-        if (downloadFileUri != null) {
-            install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-            // 在Broadcast中启动活动需要添加Intent.FLAG_ACTIVITY_NEW_TASK
-            install.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);    //添加这一句表示对目标应用临时授权该Uri所代表的文件
-            install.addCategory("android.intent.category.DEFAULT");
-            install.setDataAndType(ShareUtils.getUriFromFile(MainActivity.this, file), "application/vnd.android.package-archive");
+        if (mDownloadId <= 0 || TextUtils.isEmpty(mUpdateFilename) || mInstallPermissionPending) {
+            return;
+        }
+        if (getUpdateDownloadStatus() != DownloadManager.STATUS_SUCCESSFUL) {
+            GoUtils.DisplayToast(this, getString(R.string.update_download_failed));
+            return;
+        }
+        File directory = getExternalFilesDir("Updates");
+        if (directory == null || !mUpdateFilename.equals(new File(mUpdateFilename).getName())
+                || mUpdateFilename.contains("\\")) {
+            GoUtils.DisplayToast(this, getString(R.string.update_download_failed));
+            return;
+        }
+        File file = new File(directory, mUpdateFilename);
+        if (!file.isFile() || mDownloadManager.getUriForDownloadedFile(mDownloadId) == null) {
+            GoUtils.DisplayToast(this, getString(R.string.update_download_failed));
+            return;
+        }
+        try {
+            if (!getPackageManager().canRequestPackageInstalls()) {
+                mInstallPermissionPending = true;
+                GoUtils.DisplayToast(this, getString(R.string.update_install_permission_required));
+                mInstallPermissionLauncher.launch(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getPackageName())));
+                return;
+            }
+            Intent install = new Intent(Intent.ACTION_VIEW)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    .setDataAndType(ShareUtils.getUriFromFile(this, file), "application/vnd.android.package-archive");
             startActivity(install);
-        } else {
-            Intent intent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + getPackageName()));
-            intent.addCategory("android.intent.category.DEFAULT");
-            startActivity(intent);
+            clearUpdateDownload();
+        } catch (RuntimeException e) {
+            mInstallPermissionPending = false;
+            XLog.e("Failed to open update installer", e);
+            GoUtils.DisplayToast(this, getString(R.string.update_install_failed));
         }
     }
 }

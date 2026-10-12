@@ -48,7 +48,7 @@ public class ServiceGo extends Service {
     private LocationManager mLocManager;
     private HandlerThread mLocHandlerThread;
     private Handler mLocHandler;
-    private boolean isStop = false;
+    private volatile boolean isStop = false;
     // 通知栏消息
     private static final int SERVICE_GO_NOTE_ID = 1;
     private static final String SERVICE_GO_NOTE_ACTION_JOYSTICK_SHOW = "ShowJoyStick";
@@ -87,27 +87,38 @@ public class ServiceGo extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent == null) {
+            stopSelf();
+            return START_NOT_STICKY;
+        }
         mCurLng = intent.getDoubleExtra(MainActivity.LNG_MSG_ID, DEFAULT_LNG);
         mCurLat = intent.getDoubleExtra(MainActivity.LAT_MSG_ID, DEFAULT_LAT);
         mCurAlt = intent.getDoubleExtra(MainActivity.ALT_MSG_ID, DEFAULT_ALT);
 
         mJoyStick.setCurrentPosition(mCurLng, mCurLat, mCurAlt);
 
-        return super.onStartCommand(intent, flags, startId);
+        return START_NOT_STICKY;
     }
 
     @Override
     public void onDestroy() {
         isStop = true;
-        mLocHandler.removeMessages(HANDLER_MSG_ID);
-        mLocHandlerThread.quit();
-
-        mJoyStick.destroy();
+        if (mLocHandler != null) {
+            mLocHandler.removeCallbacksAndMessages(null);
+        }
+        if (mLocHandlerThread != null) {
+            mLocHandlerThread.quitSafely();
+        }
+        if (mJoyStick != null) {
+            mJoyStick.destroy();
+        }
 
         removeTestProviderNetwork();
         removeTestProviderGPS();
 
-        unregisterReceiver(mActReceiver);
+        if (mActReceiver != null) {
+            unregisterReceiver(mActReceiver);
+        }
         stopForeground(STOP_FOREGROUND_REMOVE);
 
         super.onDestroy();

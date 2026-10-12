@@ -22,6 +22,8 @@ import android.widget.Toast;
 
 import androidx.appcompat.app.AlertDialog;
 
+import com.elvishew.xlog.XLog;
+
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
@@ -121,7 +123,7 @@ public class GoUtils {
                 locationManager.removeTestProvider(LocationManager.GPS_PROVIDER);
             }
         } catch (SecurityException e) {
-            e.printStackTrace();
+            XLog.e("Operation failed", e);
         }
 
         return canMockPosition;
@@ -142,7 +144,7 @@ public class GoUtils {
             return packageInfo.versionName;
 
         } catch (Exception e) {
-            e.printStackTrace();
+            XLog.e("Operation failed", e);
         }
 
         return null;
@@ -162,7 +164,7 @@ public class GoUtils {
             int labelRes = applicationInfo.labelRes;
             return context.getResources().getString(labelRes);
         } catch (PackageManager.NameNotFoundException e) {
-            e.printStackTrace();
+            XLog.e("Operation failed", e);
         }
 
         return null;
@@ -189,7 +191,7 @@ public class GoUtils {
                         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                         context.startActivity(intent);
                     } catch (Exception e) {
-                        e.printStackTrace();
+                        XLog.e("Operation failed", e);
                     }
                 })
                 .setNegativeButton("取消",(dialog, which) -> {
@@ -208,7 +210,7 @@ public class GoUtils {
                         intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                         context.startActivity(intent);
                     } catch (Exception e) {
-                        e.printStackTrace();
+                        XLog.e("Operation failed", e);
                     }
                 })
                 .setNegativeButton("取消", (dialog, which) -> {
@@ -227,7 +229,7 @@ public class GoUtils {
                         Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
                         context.startActivity(intent);
                     } catch (Exception e) {
-                        e.printStackTrace();
+                        XLog.e("Operation failed", e);
                     }
                 })
                 .setNegativeButton("取消",(dialog, which) -> {
@@ -246,7 +248,7 @@ public class GoUtils {
                         Intent intent = new Intent(Settings.ACTION_WIFI_SETTINGS);
                         context.startActivity(intent);
                     } catch (Exception e) {
-                        e.printStackTrace();
+                        XLog.e("Operation failed", e);
                     }
                 })
                 .setNegativeButton("忽略",(dialog, which) -> {

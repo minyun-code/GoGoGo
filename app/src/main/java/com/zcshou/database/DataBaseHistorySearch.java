@@ -23,13 +23,15 @@ public class DataBaseHistorySearch extends SQLiteOpenHelper {
     // 搜索结果
     public static final int DB_SEARCH_TYPE_RESULT = 1;
 
-    private static final int DB_VERSION = 1;
+    private static final int DB_VERSION = 2;
     private static final String DB_NAME = "HistorySearch.db";
     private static final String CREATE_TABLE = "create table if not exists " + TABLE_NAME +
             " (DB_COLUMN_ID INTEGER PRIMARY KEY AUTOINCREMENT, DB_COLUMN_KEY TEXT NOT NULL, " +
             "DB_COLUMN_DESCRIPTION TEXT, DB_COLUMN_TIMESTAMP BIGINT NOT NULL, DB_COLUMN_IS_LOCATION INTEGER NOT NULL, " +
             "DB_COLUMN_LONGITUDE_WGS84 TEXT, DB_COLUMN_LATITUDE_WGS84 TEXT, " +
             "DB_COLUMN_LONGITUDE_CUSTOM TEXT, DB_COLUMN_LATITUDE_CUSTOM TEXT)";
+    private static final String CREATE_UNIQUE_INDEX = "CREATE UNIQUE INDEX IF NOT EXISTS "
+            + "HistorySearch_key ON " + TABLE_NAME + " (" + DB_COLUMN_KEY + ")";
             
     public DataBaseHistorySearch(Context context) {
         super(context, DB_NAME, null, DB_VERSION);
@@ -38,23 +40,37 @@ public class DataBaseHistorySearch extends SQLiteOpenHelper {
     @Override
     public void onCreate(SQLiteDatabase sqLiteDatabase) {
         sqLiteDatabase.execSQL(CREATE_TABLE);
+        sqLiteDatabase.execSQL(CREATE_UNIQUE_INDEX);
     }
     
     @Override
     public void onUpgrade(SQLiteDatabase sqLiteDatabase, int oldVersion, int newVersion) {
-        String sql = "DROP TABLE IF EXISTS " + TABLE_NAME;
-        sqLiteDatabase.execSQL(sql);
-        onCreate(sqLiteDatabase);
+        if (oldVersion < 2) {
+            sqLiteDatabase.execSQL("DELETE FROM " + TABLE_NAME + " WHERE " + DB_COLUMN_ID
+                    + " <> (SELECT kept." + DB_COLUMN_ID + " FROM " + TABLE_NAME + " AS kept WHERE kept."
+                    + DB_COLUMN_KEY + " = " + TABLE_NAME + "." + DB_COLUMN_KEY
+                    + " ORDER BY kept." + DB_COLUMN_TIMESTAMP + " DESC, kept." + DB_COLUMN_ID + " DESC LIMIT 1)");
+            sqLiteDatabase.execSQL(CREATE_UNIQUE_INDEX);
+        }
     }
 
     public static void saveHistorySearch(SQLiteDatabase sqLiteDatabase, ContentValues contentValues) {
         try {
-            // 先删除原来的记录，再插入新记录
-            String searchKey = contentValues.get(DataBaseHistorySearch.DB_COLUMN_KEY).toString();
-            sqLiteDatabase.delete(DataBaseHistorySearch.TABLE_NAME, DataBaseHistorySearch.DB_COLUMN_KEY + " = ?", new String[] {searchKey});
-            sqLiteDatabase.insert(DataBaseHistorySearch.TABLE_NAME, null, contentValues);
+            sqLiteDatabase.beginTransaction();
+            try {
+                ContentValues values = new ContentValues(contentValues);
+                values.remove(DB_COLUMN_ID);
+                String searchKey = values.getAsString(DB_COLUMN_KEY);
+                int updated = sqLiteDatabase.update(TABLE_NAME, values, DB_COLUMN_KEY + " = ?", new String[] {searchKey});
+                if (updated == 0) {
+                    sqLiteDatabase.insertOrThrow(TABLE_NAME, null, values);
+                }
+                sqLiteDatabase.setTransactionSuccessful();
+            } finally {
+                sqLiteDatabase.endTransaction();
+            }
         } catch (Exception e) {
-            XLog.e("DATABASE: insert error");
+            XLog.e("DATABASE: save search error", e);
         }
     }
 }

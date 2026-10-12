@@ -11,7 +11,6 @@ import androidx.preference.PreferenceManager;
 
 import android.text.InputType;
 import android.text.TextUtils;
-import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -35,6 +34,8 @@ import java.util.Map;
 
 import com.zcshou.database.DataBaseHistoryLocation;
 import com.zcshou.utils.GoUtils;
+import com.zcshou.utils.AppSettings;
+import com.elvishew.xlog.XLog;
 
 public class HistoryActivity extends BaseActivity {
     public static final String KEY_ID = "KEY_ID";
@@ -80,7 +81,9 @@ public class HistoryActivity extends BaseActivity {
 
     @Override
     protected void onDestroy() {
-        mHistoryLocationDB.close();
+        if (mHistoryLocationDB != null) {
+            mHistoryLocationDB.close();
+        }
         super.onDestroy();
     }
 
@@ -124,7 +127,7 @@ public class HistoryActivity extends BaseActivity {
             DataBaseHistoryLocation hisLocDBHelper = new DataBaseHistoryLocation(getApplicationContext());
             mHistoryLocationDB = hisLocDBHelper.getWritableDatabase();
         } catch (Exception e) {
-            Log.e("HistoryActivity", "ERROR - initLocationDataBase");
+            XLog.e("HistoryActivity: ERROR - initLocationDataBase");
         }
 
         recordArchive();
@@ -152,7 +155,7 @@ public class HistoryActivity extends BaseActivity {
                 String BD09Longitude = cursor.getString(5);
                 String BD09Latitude = cursor.getString(6);
                 boolean favorite = cursor.getInt(7) == 1;
-                Log.d("TB", ID + "\t" + Location + "\t" + Longitude + "\t" + Latitude + "\t" + TimeStamp + "\t" + BD09Longitude + "\t" + BD09Latitude);
+                XLog.d("TB: " + ID + "\t" + Location + "\t" + Longitude + "\t" + Latitude + "\t" + TimeStamp + "\t" + BD09Longitude + "\t" + BD09Latitude);
                 BigDecimal bigDecimalLongitude = BigDecimal.valueOf(Double.parseDouble(Longitude));
                 BigDecimal bigDecimalLatitude = BigDecimal.valueOf(Double.parseDouble(Latitude));
                 BigDecimal bigDecimalBDLongitude = BigDecimal.valueOf(Double.parseDouble(BD09Longitude));
@@ -172,20 +175,15 @@ public class HistoryActivity extends BaseActivity {
             cursor.close();
         } catch (Exception e) {
             data.clear();
-            Log.e("HistoryActivity", "ERROR - fetchAllRecord");
+            XLog.e("HistoryActivity: ERROR - fetchAllRecord");
         }
 
         return data;
     }
 
     private void recordArchive() {
-        double limits;
-        try {
-            limits = Double.parseDouble(sharedPreferences.getString("setting_pos_history", getResources().getString(R.string.history_expiration)));
-        } catch (NumberFormatException e) {  // GOOD: The exception is caught.
-            limits = 7;
-        }
-        final long weekSecond = (long) (limits * 24 * 60 * 60);
+        final long weekSecond = AppSettings.historyExpirationSeconds(sharedPreferences.getString(
+                AppSettings.HISTORY_EXPIRATION, getString(R.string.history_expiration)));
 
         try {
             mHistoryLocationDB.delete(DataBaseHistoryLocation.TABLE_NAME,
@@ -193,7 +191,7 @@ public class HistoryActivity extends BaseActivity {
                             + DataBaseHistoryLocation.DB_COLUMN_FAVORITE + " = 0",
                     new String[] {Long.toString(System.currentTimeMillis() / 1000 - weekSecond)});
         } catch (Exception e) {
-            Log.e("HistoryActivity", "ERROR - recordArchive");
+            XLog.e("HistoryActivity: ERROR - recordArchive");
         }
     }
 
@@ -209,7 +207,7 @@ public class HistoryActivity extends BaseActivity {
             }
         } catch (Exception e) {
             deleteRet = false;
-            Log.e("HistoryActivity", "ERROR - deleteRecord");
+            XLog.e("HistoryActivity: ERROR - deleteRecord");
         }
 
         return deleteRet;
@@ -399,7 +397,7 @@ public class HistoryActivity extends BaseActivity {
                         new int[]{R.id.LocationID, R.id.LocationText, R.id.TimeText, R.id.WGSLatLngText, R.id.BDLatLngText, R.id.FavoriteText});
                 mRecordListView.setAdapter(simAdapt);
             } catch (Exception e) {
-                Log.e("HistoryActivity", "ERROR - updateRecordList");
+                XLog.e("HistoryActivity: ERROR - updateRecordList");
             }
         }
     }

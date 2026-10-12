@@ -8,7 +8,6 @@ import android.database.sqlite.SQLiteDatabase;
 import android.graphics.PixelFormat;
 import android.text.TextUtils;
 import android.util.AttributeSet;
-import android.util.Log;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
@@ -34,6 +33,7 @@ import com.baidu.mapapi.map.MyLocationData;
 import com.baidu.mapapi.model.LatLng;
 import com.baidu.mapapi.search.core.SearchResult;
 import com.baidu.mapapi.search.sug.SuggestionSearch;
+import com.elvishew.xlog.XLog;
 import com.zcshou.database.DataBaseHistoryLocation;
 import com.zcshou.gogogo.HistoryActivity;
 import com.zcshou.gogogo.MainActivity;
@@ -73,6 +73,7 @@ public class JoyStick extends View {
     private View mJoystickLayout;
     private GoUtils.TimeCount mTimer;
     private boolean isMove;
+    private boolean isDestroyed;
     private double mSpeed = 1.2;        /* 默认的速度，单位 m/s */
     private double mAltitude = 55.0;
     private double mAngle = 0;
@@ -215,6 +216,15 @@ public class JoyStick extends View {
     }
 
     public void destroy() {
+        if (isDestroyed) {
+            return;
+        }
+        isDestroyed = true;
+        isMove = false;
+        if (mTimer != null) {
+            mTimer.cancel();
+        }
+        mListener = null;
         if (mMapLayout.getParent() != null) {
             mWindowManager.removeViewImmediate(mMapLayout);
         }
@@ -265,6 +275,9 @@ public class JoyStick extends View {
 
             @Override
             public void onFinish() {
+                if (isDestroyed || !isMove || mListener == null) {
+                    return;
+                }
                 // 注意：这里的 x y 与 圆中角度的对应问题（以 X 轴正向为 0 度）且转换为 km
                 disLng = mSpeed * (double)(DivGo / 1000) * mR * Math.cos(mAngle * 2 * Math.PI / 360) / 1000;// 注意安卓中的三角函数使用的是弧度
                 disLat = mSpeed * (double)(DivGo / 1000) * mR * Math.sin(mAngle * 2 * Math.PI / 360) / 1000;// 注意安卓中的三角函数使用的是弧度
@@ -376,6 +389,9 @@ public class JoyStick extends View {
     }
 
     private void processDirection(boolean auto, double angle, double r) {
+        if (isDestroyed || mListener == null) {
+            return;
+        }
         if (r <= 0) {
             mTimer.cancel();
             isMove = false;
@@ -529,7 +545,7 @@ public class JoyStick extends View {
                             MapSearchUtils.createSuggestionOption(query, MainActivity.mCurrentCity));
                 } catch (Exception e) {
                     GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_error_search));
-                    Log.e("JoyStick", "Search request failed", e);
+                    XLog.e("JoyStick: Search request failed", e);
                 }
                 return true;
             }
@@ -542,7 +558,7 @@ public class JoyStick extends View {
                                 MapSearchUtils.createSuggestionOption(newText, MainActivity.mCurrentCity));
                     } catch (Exception e) {
                         GoUtils.DisplayToast(mContext,getResources().getString(R.string.app_error_search));
-                        Log.e("JoyStick", "Search request failed", e);
+                        XLog.e("JoyStick: Search request failed", e);
                     }
                 } else {
                     mSearchLayout.setVisibility(GONE);
@@ -710,7 +726,7 @@ public class JoyStick extends View {
                     location, Double.parseDouble(longitude), Double.parseDouble(latitude));
         } catch (NumberFormatException e) {
             GoUtils.DisplayToast(mContext, getResources().getString(R.string.search_favorite_error));
-            Log.e("JoyStick", "Search result has invalid coordinates", e);
+            XLog.e("JoyStick: Search result has invalid coordinates", e);
         }
     }
 
@@ -734,7 +750,7 @@ public class JoyStick extends View {
             }
         } catch (Exception e) {
             GoUtils.DisplayToast(mContext, getResources().getString(R.string.search_favorite_error));
-            Log.e("JoyStick", "Failed to save favorite location", e);
+            XLog.e("JoyStick: Failed to save favorite location", e);
         } finally {
             if (historyLocationDB != null) {
                 historyLocationDB.close();
@@ -877,7 +893,7 @@ public class JoyStick extends View {
                 String BD09Longitude = cursor.getString(5);
                 String BD09Latitude = cursor.getString(6);
                 boolean favorite = cursor.getInt(7) == 1;
-                Log.d("TB", ID + "\t" + Location + "\t" + Longitude + "\t" + Latitude + "\t" + TimeStamp + "\t" + BD09Longitude + "\t" + BD09Latitude);
+                XLog.d("TB: " + ID + "\t" + Location + "\t" + Longitude + "\t" + Latitude + "\t" + TimeStamp + "\t" + BD09Longitude + "\t" + BD09Latitude);
                 BigDecimal bigDecimalLongitude = BigDecimal.valueOf(Double.parseDouble(Longitude));
                 BigDecimal bigDecimalLatitude = BigDecimal.valueOf(Double.parseDouble(Latitude));
                 BigDecimal bigDecimalBDLongitude = BigDecimal.valueOf(Double.parseDouble(BD09Longitude));
@@ -897,7 +913,7 @@ public class JoyStick extends View {
             cursor.close();
             mHistoryLocationDB.close();
         } catch (Exception e) {
-            Log.e("JOYSTICK", "ERROR - fetchAllRecord");
+            XLog.e("JOYSTICK: ERROR - fetchAllRecord");
         }
     }
 
@@ -918,7 +934,7 @@ public class JoyStick extends View {
                         new int[]{R.id.LocationID, R.id.LocationText, R.id.TimeText, R.id.WGSLatLngText, R.id.BDLatLngText, R.id.FavoriteText});
                 mRecordListView.setAdapter(simAdapt);
             } catch (Exception e) {
-                Log.e("JOYSTICK", "ERROR - showHistory");
+                XLog.e("JOYSTICK: ERROR - showHistory");
             }
         }
     }

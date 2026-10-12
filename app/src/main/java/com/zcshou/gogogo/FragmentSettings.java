@@ -7,11 +7,10 @@ import androidx.preference.EditTextPreference;
 import androidx.preference.ListPreference;
 import androidx.preference.Preference;
 import androidx.preference.PreferenceFragmentCompat;
-import androidx.preference.SwitchPreferenceCompat;
 
-import com.baidu.mapapi.SDKInitializer;
-import com.elvishew.xlog.XLog;
 import com.zcshou.utils.GoUtils;
+import com.zcshou.utils.InputUtils;
+import com.zcshou.utils.AppSettings;
 
 import java.util.Objects;
 
@@ -22,12 +21,23 @@ public class FragmentSettings extends PreferenceFragmentCompat {
         if (preference != null) {
             preference.setSummaryProvider((Preference.SummaryProvider<EditTextPreference>) EditTextPreference::getText);
             preference.setOnBindEditTextListener(editText -> {
-                editText.setInputType(InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_CLASS_NUMBER);
+                int inputType = InputType.TYPE_NUMBER_FLAG_DECIMAL | InputType.TYPE_CLASS_NUMBER;
+                if ("setting_altitude".equals(preference.getKey())) {
+                    inputType |= InputType.TYPE_NUMBER_FLAG_SIGNED;
+                }
+                editText.setInputType(inputType);
                 editText.setSelection(editText.length());
             });
             preference.setOnPreferenceChangeListener((pref, newValue) -> {
-                if (newValue.toString().trim().isEmpty()) {
-                    GoUtils.DisplayToast(this.getContext(), getResources().getString(R.string.app_error_input_null));
+                try {
+                    double value = InputUtils.parseFiniteDouble(newValue.toString());
+                    if ((!"setting_altitude".equals(pref.getKey()) && value < 0)
+                            || (AppSettings.HISTORY_EXPIRATION.equals(pref.getKey())
+                            && value > Long.MAX_VALUE / 86400.0)) {
+                        throw new NumberFormatException("Setting out of range");
+                    }
+                } catch (NumberFormatException e) {
+                    GoUtils.DisplayToast(this.getContext(), getString(R.string.app_error_input));
                     return false;
                 }
                 return true;
@@ -65,25 +75,7 @@ public class FragmentSettings extends PreferenceFragmentCompat {
         EditTextPreference pfLonOffset = findPreference("setting_lon_max_offset");
         setupDecimalEditTextPreference(pfLonOffset);
 
-        SwitchPreferenceCompat pLog = findPreference("setting_log_off");
-        if (pLog != null) {
-            pLog.setOnPreferenceChangeListener((preference, newValue) -> {
-                if(((SwitchPreferenceCompat) preference).isChecked() != (Boolean) newValue) {
-                    XLog.d(preference.getKey() + newValue);
-
-                    if (Boolean.parseBoolean(newValue.toString())) {
-                        XLog.d("on");
-                    } else {
-                        XLog.d("off");
-                    }
-                    return true;
-                } else {
-                    return false;
-                }
-            });
-        }
-
-        EditTextPreference pfPosHisValid = findPreference("setting_history_expiration");
+        EditTextPreference pfPosHisValid = findPreference(AppSettings.HISTORY_EXPIRATION);
         setupDecimalEditTextPreference(pfPosHisValid);
 
         // 设置版本号

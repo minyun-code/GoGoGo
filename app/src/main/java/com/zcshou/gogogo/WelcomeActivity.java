@@ -30,13 +30,12 @@ import com.zcshou.utils.GoUtils;
 import java.util.ArrayList;
 
 public class WelcomeActivity extends AppCompatActivity {
-    private static SharedPreferences preferences;
+    private SharedPreferences preferences;
     private static final String KEY_ACCEPT_AGREEMENT = "KEY_ACCEPT_AGREEMENT";
     private static final String KEY_ACCEPT_PRIVACY = "KEY_ACCEPT_PRIVACY";
 
-    private static boolean isPermission = false;
     private static final int SDK_PERMISSION_REQUEST = 127;
-    private static final ArrayList<String> ReqPermissions = new ArrayList<>();
+    private boolean permissionRequestInFlight;
 
     private CheckBox checkBox;
     private Boolean mAgreement;
@@ -79,45 +78,39 @@ public class WelcomeActivity extends AppCompatActivity {
 
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        if (requestCode == SDK_PERMISSION_REQUEST) {
-            for (int i = 0; i < ReqPermissions.size(); i++) {
-                if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
-                    GoUtils.DisplayToast(this, getResources().getString(R.string.app_error_permission));
-                    return;
-                }
-            }
-            isPermission = true;
-        }
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == SDK_PERMISSION_REQUEST) {
+            permissionRequestInFlight = false;
+            // Recheck system state; callbacks can be empty or contain denied optional permissions.
+            if (!hasLocationPermissions()) {
+                GoUtils.DisplayToast(this, getResources().getString(R.string.app_error_permission));
+            }
+        }
+    }
+
+    private boolean hasLocationPermissions() {
+        return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
     }
 
     private void checkDefaultPermissions() {
+        if (permissionRequestInFlight) {
+            return;
+        }
+        ArrayList<String> requiredPermissions = new ArrayList<>();
         // 定位精确位置
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            ReqPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            requiredPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            // Android 12 requires fine and coarse location to be requested together.
+            requiredPermissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+        } else if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            requiredPermissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
         }
 
-        if (checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            ReqPermissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
-        }
-
-        /*
-         * 读写权限和电话状态权限非必要权限(建议授予)只会申请一次，用户同意或者禁止，只会弹一次
-         */
-        // 读写权限
-        if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            ReqPermissions.add(Manifest.permission.READ_EXTERNAL_STORAGE);
-        }
-
-        // 读取电话状态权限
-        if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
-            ReqPermissions.add(Manifest.permission.READ_PHONE_STATE);
-        }
-
-        if (ReqPermissions.isEmpty()) {
-            isPermission = true;
-        } else {
-            requestPermissions(ReqPermissions.toArray(new String[0]), SDK_PERMISSION_REQUEST);
+        // App-owned logs and updates do not require external-storage or phone-state permission.
+        if (!requiredPermissions.isEmpty()) {
+            permissionRequestInFlight = true;
+            requestPermissions(requiredPermissions.toArray(new String[0]), SDK_PERMISSION_REQUEST);
         }
     }
 
@@ -137,7 +130,7 @@ public class WelcomeActivity extends AppCompatActivity {
             return;
         }
 
-        if (isPermission) {
+        if (hasLocationPermissions()) {
             Intent intent = new Intent(WelcomeActivity.this, MainActivity.class);
             startActivity(intent);
             WelcomeActivity.this.finish();

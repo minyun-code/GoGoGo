@@ -35,6 +35,8 @@
     <string name="app_error_gps">定位不可用，请检查 GPS 是否开启</string>
     <string name="app_error_network">网络不可用，请检查网络连接</string>
     <string name="app_error_permission">权限不足，请授予相关权限</string>
+    <string name="app_service_starting">定位服务正在启动，请稍后重试</string>
+    <string name="app_service_start_error">定位服务启动失败，请检查相关权限</string>
     <string name="app_error_input">输入有误，请检查输入是否合法</string>
     <string name="app_error_input_null">输入不能为空，请重新输入内容</string>
     <string name="app_error_search">查找失败，请检查网络或定位</string>
@@ -146,4 +148,9 @@
     <string name="update_ignore">忽略一次</string>
     <string name="update_time">更新时间：</string>
     <string name="update_commit">提交信息：</string>
+    <string name="update_check_failed">检测更新失败，请稍后重试</string>
+    <string name="update_download_failed">升级文件下载失败，请重新检测更新</string>
+    <string name="update_download_in_progress">升级文件正在下载，请稍候</string>
+    <string name="update_install_permission_required">请允许影梭安装应用后继续升级</string>
+    <string name="update_install_failed">无法打开安装页面，请重新检测更新</string>
 </resources>
